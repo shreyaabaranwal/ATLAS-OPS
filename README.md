@@ -1,6 +1,6 @@
-Ops-Copilot is an AI-native Operations Orchestrator that transforms how engineering teams manage cloud infrastructure. By integrating real-time voice interaction, computer vision for dashboard analysis, and a policy-aware reasoning engine, it transitions DevOps from reactive manual toil to "Human-in-the-Loop" autonomous remediation. Built for the Google Gemini Live and Amazon Nova AI hackathons, it demonstrates a production-grade approach to safe, auditable, and multimodal agentic operations.
+Atlas Ops is an AI-native Operations Orchestrator that transforms how engineering teams manage cloud infrastructure. By integrating real-time voice interaction, computer vision for dashboard analysis, and a policy-aware reasoning engine, it transitions DevOps from reactive manual toil to "Human-in-the-Loop" autonomous remediation. Built for the Google Gemini Live and Amazon Nova AI hackathons, it demonstrates a production-grade approach to safe, auditable, and multimodal agentic operations.
 
-🚩 The Problem: The "Toil" Gap
+## The Problem: The "Toil" Gap
 Modern cloud environments generate massive telemetry data, yet incident response remains manual and fragmented. High-stakes "On-Call" shifts suffer from:
 
 Context Switching: Engineers bounce between documentation, CLI, and metrics.
@@ -10,9 +10,9 @@ Delayed MTTR: Manual root-cause analysis in complex microservices is slow.
 Automation Fear: High-risk actions (scaling/rollbacks) lack deterministic safety nets and dry-run validation.
 
 💡 The Solution: Agentic Operations
-Ops-Copilot acts as a "Senior SRE sitting next to you." It listens to voice commands via Gemini Live, analyzes real-time CloudWatch/Grafana screens via Vision, and executes safe, policy-governed actions across AWS and GCP. It doesn't just "chat"—it manages an Incident State Machine to ensure every action is verified and reversible.
+Atlas Ops acts as a "Senior SRE sitting next to you." It listens to voice commands via Gemini Live, analyzes real-time CloudWatch/Grafana screens via Vision, and executes safe, policy-governed actions across AWS and GCP. It doesn't just "chat"—it manages an Incident State Machine to ensure every action is verified and reversible.
 
-🚀 Core Features
+## Core Features
 1. Multimodal Interaction (Live Voice + Vision)
 Voice-First Interface: Hands-free incident management using Gemini Live for real-time dialogue and interruption-aware command handling.
 
@@ -38,7 +38,8 @@ Immutable Audit Log: Every decision, voice prompt, and execution result is logge
 
 Post-Incident Reports: Automated generation of "Executive Summaries" and "Root Cause Analysis" (RCA) documents.
 
-🏗️ System Architecture
+## System Architecture
+```
 Plaintext
 [ USER ] <---(Voice/Vision)---> [ MULTIMODAL GATEWAY ]
                                        |
@@ -50,7 +51,9 @@ Plaintext
  - Gemini 1.5 Pro (Brain)      - AWS SDK (Boto3)             - CloudWatch / Logs
  - Amazon Nova (Agentic)       - Nova Act (UI Auth)          - Telemetry Dashboard
  - Policy Engine               - Approval Workflows          - Audit Trail (S3)
-🛠️ Implementation Details
+```
+
+## Implementation Details
 Google Gemini Live Agent (GCP)
 Model: gemini-1.5-flash-8b for low-latency voice and gemini-1.5-pro for complex visual reasoning.
 
@@ -65,7 +68,7 @@ Nova Act: Utilized for advanced UI-based automation where API coverage is incomp
 
 Infrastructure: Orchestrated via AWS Step Functions to maintain the Incident State Machine and AWS Lambda for specialized tool-calling.
 
-🧰 Technology Stack
+## Technology Stack
 Language: Python 3.11+, TypeScript (Frontend)
 
 AI/ML: Google Gemini API, Amazon Bedrock (Nova), LangGraph (Agent Orchestration)
@@ -76,7 +79,7 @@ Infrastructure as Code: AWS CDK / Terraform
 
 Communication: WebRTC for Live Voice, WebSockets for State Updates
 
-⚙️ Setup & Deployment
+## Setup & Deployment
 Local Development
 Clone the Repo: git clone https://github.com/user/ops-copilot
 
@@ -95,7 +98,7 @@ State: Provision DynamoDB tables for incident tracking.
 
 Voice: Configure the Multimodal Live API endpoint.
 
-📺 Demo Walkthrough
+## Demo Walkthrough
 Detection: User shares screen showing a Grafana dashboard with rising 5xx errors.
 
 Diagnosis: User asks (Voice): "What's happening?" Agent analyzes the screen and logs, responding with 92% confidence that the DB is throttled.
@@ -106,14 +109,14 @@ Dry-Run: User says: "Do a dry run." Agent simulates the API call and confirms no
 
 Execution & Verification: User approves; Agent scales the DB, monitors the latency drop, and confirms: "Systems back to normal. Report generated."
 
-🛡️ Safety, Reliability & Governance
+## Safety, Reliability & Governance
 Human-in-the-Loop (HITL): No "Write" actions occur without explicit verbal or UI confirmation.
 
 Least Privilege: Agent uses scoped IAM roles with ResourceTag restrictions to prevent accidental deletions.
 
 Reversibility: Every "Action" playbook includes a corresponding "Rollback" path in the state machine.
 
-🌟 Why This Is Different
+## Why This Is Different
 Most AI chatbots are Passive/Text-Only. Ops-Copilot is:
 
 Proactive: It watches dashboards and alerts the user before they ask.
@@ -124,7 +127,7 @@ Stateful: It remembers the incident context across a 20-minute conversation.
 
 Accountable: It provides a deterministic audit trail that satisfies enterprise SRE requirements.
 
-📈 Future Improvements
+## Future Improvements
 Self-Healing Playbooks: Learning from previous human approvals to suggest more accurate "Confidence" scores.
 
 Cost Optimization Mode: Integrating AWS Cost Explorer to suggest cheaper remediation paths.
