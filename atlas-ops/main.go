@@ -54,8 +54,7 @@ fmt.Printf("current cpu utilisation: %.2f%%\n", err)
 if cpu>80 {
 	fmt.Println("cpu utilisation is high, consider scaling up instances.")
 
-}
-else{
+} else{
 	fmt.Println("system is healthy.")
 }
 
