@@ -1,55 +1,22 @@
 package main
 
 import (
-	"atlas-ops/aws"
 	"context"
 	"fmt"
 	"log"
+
+	"atlas-ops/api"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 )
 
 func main() {
+
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		log.Fatalf("unable to load AWS config, %v", err)
-
+		log.Fatalf("unable to load AWS config: %v", err)
 	}
 
-	fmt.Println("AWS configurations seccessfully loaded")
-	fmt.Println("=================================")
-
-	//ec2 instances are listed here
-	err = aws.ListEC2Instances(cfg)
-	if err != nil {
-		log.Fatalf("Error listing instances: %v", err)
-	}
-	fmt.Println("=================================")
-
-	// yaha pe pehli instance id milega
-
-	instanceID, err := aws.GetFirstEC2InstanceID(cfg)
-	if err != nil {
-		log.Fatalf("Error getting first instance ID: %v", err)
-	}
-	fmt.Println(" monitoring instances ", instanceID)
-	fmt.Println()
-
-	// getting cpu utilisations
-
-	cpu, err := aws.GetCPUUtilization(cfg, instanceID)
-	if err != nil {
-		log.Fatalf("Error fetching cpu utilisation: %v", err)
-	}
-	fmt.Printf("current cpu utilisation: %.2f%%\n", cpu)
-
-	// basic policy engine
-
-	if cpu > 80 {
-		fmt.Println("cpu utilisation is high, consider scaling up instances.")
-
-	} else {
-		fmt.Println("system is healthy.")
-	}
-
+	fmt.Println("AWS config loaded successfully")
+	api.StartServer(cfg)
 }
