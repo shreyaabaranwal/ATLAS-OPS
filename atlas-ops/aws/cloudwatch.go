@@ -11,7 +11,7 @@ import (
 )
 
 
-func GetCPUUtilisation(cfg aws.Config, instanceID string) (float64, error){
+func GetCPUUtilization(cfg aws.Config, instanceID string) (float64, error){
 client := cloudwatch.NewFromConfig(cfg)
 
 endTime := time.Now()

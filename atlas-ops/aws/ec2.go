@@ -58,9 +58,8 @@ func ListEC2Instances(cfg aws.Config) error {
 	return nil 
 }
 
-
-// GetFirstInstanceID returns first EC2 instance ID
-func GetFirstInstanceID(cfg aws.Config) (string, error) {
+// GetInstanceType returns the instance type for a given instance ID
+func GetInstanceType(cfg aws.Config, instanceID string) (string, error) {
 
 	client := ec2.NewFromConfig(cfg)
 
@@ -71,11 +70,11 @@ func GetFirstInstanceID(cfg aws.Config) (string, error) {
 
 	for _, reservation := range result.Reservations {
 		for _, instance := range reservation.Instances {
-			if instance.InstanceId != nil {
-				return *instance.InstanceId, nil
+			if instance.InstanceId != nil && *instance.InstanceId == instanceID {
+				return string(instance.InstanceType), nil
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no instances found")
+	return "", fmt.Errorf("instance not found")
 }
