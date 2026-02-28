@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"atlas-ops/api"
@@ -12,11 +11,11 @@ import (
 
 func main() {
 
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		log.Fatalf("unable to load AWS config: %v", err)
 	}
 
-	fmt.Println("AWS config loaded successfully")
+	log.Println("🚀 Starting API service...")
 	api.StartServer(cfg)
 }

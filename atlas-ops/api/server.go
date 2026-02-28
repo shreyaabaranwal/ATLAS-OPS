@@ -1,7 +1,6 @@
 package api
 
 import (
-	
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,9 +9,9 @@ import (
 	"time"
 
 	"atlas-ops/aws"
-	"atlas-ops/execution"
 	"atlas-ops/incident"
 	"atlas-ops/policy"
+	"atlas-ops/queue"
 
 	sdkaws "github.com/aws/aws-sdk-go-v2/aws"
 )
@@ -26,6 +25,12 @@ type JSONResponse struct {
 func StartServer(cfg sdkaws.Config) {
 
 	store := incident.NewDynamoStore(cfg)
+
+	// 🔥 Replace with your real Queue URL
+	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
+
+	sqsClient := queue.NewSQSClient(cfg, queueURL)
+
 	mux := http.NewServeMux()
 
 	// ---------------- HEALTH ----------------
@@ -38,32 +43,32 @@ func StartServer(cfg sdkaws.Config) {
 
 		_, instanceType, cpu, err := fetchInstanceData(cfg)
 		if err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
+			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		result := policy.EvaluatePolicy(cpu, instanceType)
-		respondJSON(w, http.StatusOK, JSONResponse{Data: result})
+		respondJSON(w, 200, JSONResponse{Data: result})
 	})
 
 	// ---------------- CREATE INCIDENT ----------------
 	mux.HandleFunc("/incident", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
-			respondJSON(w, http.StatusMethodNotAllowed, JSONResponse{Error: "POST required"})
+			respondJSON(w, 405, JSONResponse{Error: "POST required"})
 			return
 		}
 
 		instanceID, instanceType, cpu, err := fetchInstanceData(cfg)
 		if err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
+			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		result := policy.EvaluatePolicy(cpu, instanceType)
 
 		if result.Status != "HIGH_CPU" {
-			respondJSON(w, http.StatusOK, JSONResponse{
+			respondJSON(w, 200, JSONResponse{
 				Message: "System healthy. No incident created.",
 			})
 			return
@@ -80,13 +85,13 @@ func StartServer(cfg sdkaws.Config) {
 		}
 
 		if err := store.Create(r.Context(), inc); err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
+			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
-		logStateChange(inc.ID, string(inc.State))
+		logStateChange(inc.ID, inc.State)
 
-		respondJSON(w, http.StatusCreated, JSONResponse{
+		respondJSON(w, 201, JSONResponse{
 			Message: "Incident created",
 			Data:    map[string]string{"incident_id": inc.ID},
 		})
@@ -96,7 +101,7 @@ func StartServer(cfg sdkaws.Config) {
 	mux.HandleFunc("/approve/", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
-			respondJSON(w, http.StatusMethodNotAllowed, JSONResponse{Error: "POST required"})
+			respondJSON(w, 405, JSONResponse{Error: "POST required"})
 			return
 		}
 
@@ -104,61 +109,42 @@ func StartServer(cfg sdkaws.Config) {
 
 		inc, err := store.Get(r.Context(), id)
 		if err != nil {
-			respondJSON(w, http.StatusNotFound, JSONResponse{Error: "Incident not found"})
+			respondJSON(w, 404, JSONResponse{Error: "Incident not found"})
 			return
 		}
 
-		scaler := execution.NewEC2Scaler(cfg)
-
-		// APPROVED
+		// Mark Approved
 		inc.State = incident.Approved
-		store.Create(r.Context(), inc)
-	logStateChange(id, string(inc.State))
+		if err := store.Create(r.Context(), inc); err != nil {
+			respondJSON(w, 500, JSONResponse{Error: err.Error()})
+			return
+		}
+		logStateChange(id, inc.State)
 
-		targetType := "t3.medium"
-
-		// Dry Run
-		if err := scaler.DryRun(inc.InstanceID, targetType); err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
+		// 🔥 Send to SQS instead of executing directly
+		if err := sqsClient.SendMessage(r.Context(), inc.ID); err != nil {
+			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
-		// Execute
-		if err := scaler.Execute(inc.InstanceID, targetType); err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
-			return
-		}
+		respondJSON(w, 200, JSONResponse{
+			Message: "Incident sent to processing queue",
+		})
+	})
 
-		inc.State = incident.Executed
-		store.Create(r.Context(), inc)
-logStateChange(id, string(inc.State))
+	// ---------------- METRICS ----------------
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 
-		time.Sleep(20 * time.Second)
-
-		newCPU, err := aws.GetCPUUtilization(cfg, inc.InstanceID)
+		metrics, err := store.GetMetrics(r.Context())
 		if err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
-			return
-		}
-
-		if newCPU > 80 {
-			scaler.Rollback(inc.InstanceID, inc.InstanceType)
-			inc.State = incident.Detected
-			store.Create(r.Context(), inc)
-			logStateChange(id, string(inc.State))
-
-			respondJSON(w, http.StatusOK, JSONResponse{
-				Message: "Rollback executed. Issue persists.",
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{
+				Error: err.Error(),
 			})
 			return
 		}
 
-		inc.State = incident.Verified
-		store.Create(r.Context(), inc)
-	logStateChange(id, string(inc.State))
-
 		respondJSON(w, http.StatusOK, JSONResponse{
-			Message: "Incident resolved successfully",
+			Data: metrics,
 		})
 	})
 
@@ -175,10 +161,10 @@ func generateID() string {
 func respondJSON(w http.ResponseWriter, status int, payload JSONResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(payload)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func logStateChange(id string, state string) {
+func logStateChange(id string, state incident.State) {
 	log.Printf("[INCIDENT %s] State changed to %s", id, state)
 }
 
@@ -201,3 +187,5 @@ func fetchInstanceData(cfg sdkaws.Config) (string, string, float64, error) {
 
 	return instanceID, instanceType, cpu, nil
 }
+
+// metrics handler moved inside StartServer; no standalone mux usage here

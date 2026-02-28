@@ -9,6 +9,7 @@ const (
 	Proposed State = "PROPOSED"
 	Approved State = "APPROVED"
 	Executed State = "EXECUTED"
+	RolledBack State = "ROLLED_BACK" 
 	Verified State = "VERIFIED"
 )
 

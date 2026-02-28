@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.55.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.56.0
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.293.0
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.22
 )
 
 require (

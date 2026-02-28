@@ -65,3 +65,26 @@ func (d *DynamoStore) Get(ctx context.Context, id string) (*Incident, error) {
 
     return &inc, nil
 }
+
+func (s *DynamoStore) ScanAll(ctx context.Context) ([]*Incident, error) {
+
+	out, err := s.Client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String(s.Table),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var incidents []*Incident
+
+	for _, item := range out.Items {
+		var inc Incident
+		err := attributevalue.UnmarshalMap(item, &inc)
+		if err != nil {
+			continue
+		}
+		incidents = append(incidents, &inc)
+	}
+
+	return incidents, nil
+}
