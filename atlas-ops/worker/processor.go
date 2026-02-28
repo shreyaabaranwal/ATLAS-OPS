@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 
-
 	"atlas-ops/execution"
 	"atlas-ops/incident"
 	"atlas-ops/queue"
@@ -37,10 +36,12 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 
 		for _, msg := range output.Messages {
 
+			ctx := context.Background()
+
 			incidentID := *msg.Body
 			log.Println("Processing incident:", incidentID)
 
-			inc, err := store.Get(context.Background(), incidentID)
+			inc, err := store.Get(ctx, incidentID)
 			if err != nil {
 				log.Println("Incident fetch error:", err)
 				continue
@@ -48,16 +49,40 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 
 			targetType := "t3.medium"
 
-			// Execute scaling
-			scaler.DryRun(inc.InstanceID, targetType)
-			scaler.Execute(inc.InstanceID, targetType)
+			// ---------------- 1️⃣ DRY RUN ----------------
+			err = scaler.DryRun(ctx, inc.InstanceID, targetType)
+			if err != nil {
+				log.Println("DryRun failed:", err)
 
-			// Mark verified
+				inc.State = incident.RolledBack
+				store.Update(ctx, inc)
+				continue
+			}
+
+			inc.State = incident.Simulated
+			store.Update(ctx, inc)
+
+			// ---------------- 2️⃣ EXECUTE ----------------
+			err = scaler.Execute(ctx, inc.InstanceID, targetType)
+			if err != nil {
+				log.Println("Execution failed:", err)
+
+				inc.State = incident.RolledBack
+				store.Update(ctx, inc)
+				continue
+			}
+
+			inc.State = incident.Executed
+			store.Update(ctx, inc)
+
+			// ---------------- 3️⃣ VERIFY ----------------
+			time.Sleep(20 * time.Second)
+
 			inc.State = incident.Verified
-			store.Create(context.Background(), inc)
+			store.Update(ctx, inc)
 
 			// Delete message from queue
-			_, err = sqsClient.Client.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+			_, err = sqsClient.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      &queueURL,
 				ReceiptHandle: msg.ReceiptHandle,
 			})
@@ -65,6 +90,8 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			if err != nil {
 				log.Println("Delete message error:", err)
 			}
+
+			log.Println("✅ Incident lifecycle completed.")
 		}
 	}
 }

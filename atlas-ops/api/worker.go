@@ -27,10 +27,11 @@ func StartWorker(cfg sdkaws.Config, store *incident.DynamoStore) {
 }
 
 func processIncident(cfg sdkaws.Config, store *incident.DynamoStore, id string) {
+	ctx := context.Background()
 
 	log.Printf("[WORKER] Processing incident %s", id)
 
-	inc, err := store.Get(context.Background(), id)
+	inc, err := store.Get(ctx, id)
 	if err != nil {
 		log.Println("Worker error:", err)
 		return
@@ -48,16 +49,16 @@ func processIncident(cfg sdkaws.Config, store *incident.DynamoStore, id string) 
 
 	if newCPU > 80 {
 
-		log.Printf("[WORKER] Rolling back incident %s", id)
-
-		scaler.Rollback(inc.InstanceID, inc.InstanceType)
-		inc.State = incident.RolledBack
-
-	} else {
-
-		log.Printf("[WORKER] Incident %s verified", id)
-		inc.State = incident.Verified
+	err := scaler.Rollback(ctx, inc.InstanceID, inc.InstanceType)
+	if err != nil {
+		log.Println("rollback failed:", err)
+		return
 	}
 
-	store.Create(context.Background(), inc)
+	inc.State = incident.RolledBack
+	store.Update(ctx, inc)
+
+	log.Println("Incident rolled back successfully")
+	}
+
 }

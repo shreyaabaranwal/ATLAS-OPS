@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+
 	"atlas-ops/incident"
 	"atlas-ops/worker"
 
@@ -19,7 +20,10 @@ func main() {
 
 	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
 
-	store := incident.NewDynamoStore(cfg)
+	// 🔥 FIX — pass table name
+	tableName := "atlas-incidents"
+
+	store := incident.NewDynamoStore(cfg, tableName)
 
 	log.Println("👷 Starting Worker service...")
 	worker.StartWorker(cfg, queueURL, store)

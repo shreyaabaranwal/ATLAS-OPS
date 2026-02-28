@@ -2,11 +2,13 @@ package incident
 
 import (
 	"context"
+	"errors"
 	"fmt"
-"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 type DynamoStore struct {
@@ -14,10 +16,11 @@ type DynamoStore struct {
 	Table  string
 }
 
-func NewDynamoStore(cfg aws.Config) *DynamoStore {
+// Table name should not be hardcoded in production
+func NewDynamoStore(cfg aws.Config, tableName string) *DynamoStore {
 	return &DynamoStore{
 		Client: dynamodb.NewFromConfig(cfg),
-		Table:  "atlas-incidents",
+		Table:  tableName,
 	}
 }
 
@@ -25,7 +28,7 @@ func (d *DynamoStore) Create(ctx context.Context, inc *Incident) error {
 
 	item, err := attributevalue.MarshalMap(inc)
 	if err != nil {
-		return fmt.Errorf("failed to marshal incident: %w", err)
+		return fmt.Errorf("marshal incident failed: %w", err)
 	}
 
 	_, err = d.Client.PutItem(ctx, &dynamodb.PutItemInput{
@@ -34,7 +37,7 @@ func (d *DynamoStore) Create(ctx context.Context, inc *Incident) error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to put item: %w", err)
+		return fmt.Errorf("put item failed: %w", err)
 	}
 
 	return nil
@@ -42,49 +45,80 @@ func (d *DynamoStore) Create(ctx context.Context, inc *Incident) error {
 
 func (d *DynamoStore) Get(ctx context.Context, id string) (*Incident, error) {
 
-    out, err := d.Client.GetItem(ctx, &dynamodb.GetItemInput{
-        TableName: aws.String(d.Table),
-        Key: map[string]types.AttributeValue{
-            "id": &types.AttributeValueMemberS{Value: id},
-        },
-    })
-
-    if err != nil {
-        return nil, fmt.Errorf("failed to get item: %w", err)
-    }
-
-    if out.Item == nil {
-        return nil, fmt.Errorf("incident not found")
-    }
-
-    var inc Incident
-    err = attributevalue.UnmarshalMap(out.Item, &inc)
-    if err != nil {
-        return nil, fmt.Errorf("failed to unmarshal item: %w", err)
-    }
-
-    return &inc, nil
-}
-
-func (s *DynamoStore) ScanAll(ctx context.Context) ([]*Incident, error) {
-
-	out, err := s.Client.Scan(ctx, &dynamodb.ScanInput{
-		TableName: aws.String(s.Table),
+	out, err := d.Client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(d.Table),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: id},
+		},
 	})
+
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get item failed: %w", err)
 	}
 
-	var incidents []*Incident
+	if out.Item == nil {
+		return nil, errors.New("incident not found")
+	}
 
-	for _, item := range out.Items {
-		var inc Incident
-		err := attributevalue.UnmarshalMap(item, &inc)
+	var inc Incident
+	err = attributevalue.UnmarshalMap(out.Item, &inc)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal failed: %w", err)
+	}
+
+	return &inc, nil
+}
+
+func (d *DynamoStore) ScanAll(ctx context.Context) ([]*Incident, error) {
+
+	var incidents []*Incident
+	var lastEvaluatedKey map[string]types.AttributeValue
+
+	for {
+		out, err := d.Client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:         aws.String(d.Table),
+			ExclusiveStartKey: lastEvaluatedKey,
+		})
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("scan failed: %w", err)
 		}
-		incidents = append(incidents, &inc)
+
+		for _, item := range out.Items {
+			var inc Incident
+			if err := attributevalue.UnmarshalMap(item, &inc); err != nil {
+				continue
+			}
+			incidents = append(incidents, &inc)
+		}
+
+		if out.LastEvaluatedKey == nil {
+			break
+		}
+
+		lastEvaluatedKey = out.LastEvaluatedKey
 	}
 
 	return incidents, nil
+}
+func (d *DynamoStore) Update(ctx context.Context, inc *Incident) error {
+
+	_, err := d.Client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.Table),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: inc.ID},
+		},
+		UpdateExpression: aws.String("SET #s = :state"),
+		ExpressionAttributeNames: map[string]string{
+			"#s": "state",
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":state": &types.AttributeValueMemberS{Value: string(inc.State)},
+		},
+	})
+
+	if err != nil {
+		return fmt.Errorf("update state failed: %w", err)
+	}
+
+	return nil
 }

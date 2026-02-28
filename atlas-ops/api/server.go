@@ -12,6 +12,7 @@ import (
 	"atlas-ops/incident"
 	"atlas-ops/policy"
 	"atlas-ops/queue"
+	"atlas-ops/infra"
 
 	sdkaws "github.com/aws/aws-sdk-go-v2/aws"
 )
@@ -24,11 +25,14 @@ type JSONResponse struct {
 
 func StartServer(cfg sdkaws.Config) {
 
-	store := incident.NewDynamoStore(cfg)
+	// 🔹 Incident store
+	store := incident.NewDynamoStore(cfg, "atlas-incidents")
 
-	// 🔥 Replace with your real Queue URL
+	// 🔹 Infra metrics store
+	infraStore := infra.NewStore(store.Client)
+
+	// 🔹 Replace with your real Queue URL
 	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
-
 	sqsClient := queue.NewSQSClient(cfg, queueURL)
 
 	mux := http.NewServeMux()
@@ -41,13 +45,21 @@ func StartServer(cfg sdkaws.Config) {
 	// ---------------- MONITOR ----------------
 	mux.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
 
-		_, instanceType, cpu, err := fetchInstanceData(cfg)
+		instanceID, instanceType, cpu, err := fetchInstanceData(cfg)
 		if err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
+		// 🔥 Save CPU snapshot in atlas-metrics
+		err = infraStore.SaveMetric(r.Context(), instanceID, cpu)
+		if err != nil {
+			log.Println("Failed to save CPU metric:", err)
+		}
+
+		// Keep current simple policy
 		result := policy.EvaluatePolicy(cpu, instanceType)
+
 		respondJSON(w, 200, JSONResponse{Data: result})
 	})
 
@@ -115,13 +127,14 @@ func StartServer(cfg sdkaws.Config) {
 
 		// Mark Approved
 		inc.State = incident.Approved
-		if err := store.Create(r.Context(), inc); err != nil {
+		if err := store.Update(r.Context(), inc); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
+
 		logStateChange(id, inc.State)
 
-		// 🔥 Send to SQS instead of executing directly
+		// Send to SQS
 		if err := sqsClient.SendMessage(r.Context(), inc.ID); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
@@ -187,5 +200,3 @@ func fetchInstanceData(cfg sdkaws.Config) (string, string, float64, error) {
 
 	return instanceID, instanceType, cpu, nil
 }
-
-// metrics handler moved inside StartServer; no standalone mux usage here

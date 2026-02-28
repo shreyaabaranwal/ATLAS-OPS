@@ -2,12 +2,14 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 )
 
 type EC2Scaler struct {
@@ -20,10 +22,10 @@ func NewEC2Scaler(cfg aws.Config) *EC2Scaler {
 	}
 }
 
-// ---------------- Dry Run ----------------
-func (e *EC2Scaler) DryRun(instanceID string, newType string) error {
+// ---------------- DRY RUN ----------------
+func (e *EC2Scaler) DryRun(ctx context.Context, instanceID string, newType string) error {
 
-	log.Println("Running DryRun simulation...")
+	log.Println("🔍 Running DryRun simulation...")
 
 	input := &ec2.ModifyInstanceAttributeInput{
 		InstanceId: aws.String(instanceID),
@@ -33,21 +35,30 @@ func (e *EC2Scaler) DryRun(instanceID string, newType string) error {
 		DryRun: aws.Bool(true),
 	}
 
-	_, err := e.Client.ModifyInstanceAttribute(context.TODO(), input)
+	_, err := e.Client.ModifyInstanceAttribute(ctx, input)
 
-	// AWS DryRun returns error intentionally
 	if err != nil {
-		log.Println("DryRun validation complete.")
-		return nil
+
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+
+			// This means DryRun is SUCCESS
+			if apiErr.ErrorCode() == "DryRunOperation" {
+				log.Println("✅ DryRun permission validated.")
+				return nil
+			}
+		}
+
+		return fmt.Errorf("dry run failed: %w", err)
 	}
 
 	return nil
 }
 
-// ---------------- Execute Scaling ----------------
-func (e *EC2Scaler) Execute(instanceID string, newType string) error {
+// ---------------- EXECUTE ----------------
+func (e *EC2Scaler) Execute(ctx context.Context, instanceID string, newType string) error {
 
-	log.Println("Executing scaling operation...")
+	log.Println("🚀 Executing scaling operation...")
 
 	input := &ec2.ModifyInstanceAttributeInput{
 		InstanceId: aws.String(instanceID),
@@ -56,18 +67,19 @@ func (e *EC2Scaler) Execute(instanceID string, newType string) error {
 		},
 	}
 
-	_, err := e.Client.ModifyInstanceAttribute(context.TODO(), input)
+	_, err := e.Client.ModifyInstanceAttribute(ctx, input)
 	if err != nil {
 		return fmt.Errorf("scaling failed: %w", err)
 	}
 
+	log.Println("✅ Scaling successful.")
 	return nil
 }
 
-// ---------------- Rollback ----------------
-func (e *EC2Scaler) Rollback(instanceID string, previousType string) error {
+// ---------------- ROLLBACK ----------------
+func (e *EC2Scaler) Rollback(ctx context.Context, instanceID string, previousType string) error {
 
-	log.Println("Rolling back instance type...")
+	log.Println("↩ Rolling back instance type...")
 
-	return e.Execute(instanceID, previousType)
+	return e.Execute(ctx, instanceID, previousType)
 }
