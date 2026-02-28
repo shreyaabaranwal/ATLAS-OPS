@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-"github.com/aws/aws-sdk-go-v2/aws"
-	 
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
@@ -20,6 +20,7 @@ func NewEC2Scaler(cfg aws.Config) *EC2Scaler {
 	}
 }
 
+// ---------------- Dry Run ----------------
 func (e *EC2Scaler) DryRun(instanceID string, newType string) error {
 
 	log.Println("Running DryRun simulation...")
@@ -34,6 +35,7 @@ func (e *EC2Scaler) DryRun(instanceID string, newType string) error {
 
 	_, err := e.Client.ModifyInstanceAttribute(context.TODO(), input)
 
+	// AWS DryRun returns error intentionally
 	if err != nil {
 		log.Println("DryRun validation complete.")
 		return nil
@@ -42,6 +44,7 @@ func (e *EC2Scaler) DryRun(instanceID string, newType string) error {
 	return nil
 }
 
+// ---------------- Execute Scaling ----------------
 func (e *EC2Scaler) Execute(instanceID string, newType string) error {
 
 	log.Println("Executing scaling operation...")
@@ -61,7 +64,10 @@ func (e *EC2Scaler) Execute(instanceID string, newType string) error {
 	return nil
 }
 
-func (e *EC2Scaler) Rollback(instanceID string, oldType string) error {
+// ---------------- Rollback ----------------
+func (e *EC2Scaler) Rollback(instanceID string, previousType string) error {
+
 	log.Println("Rolling back instance type...")
-	return e.Execute(instanceID, oldType)
+
+	return e.Execute(instanceID, previousType)
 }

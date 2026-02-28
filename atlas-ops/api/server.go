@@ -1,81 +1,76 @@
 package api
 
 import (
+	
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"atlas-ops/aws"
 	"atlas-ops/execution"
 	"atlas-ops/incident"
 	"atlas-ops/policy"
+
 	sdkaws "github.com/aws/aws-sdk-go-v2/aws"
 )
 
+type JSONResponse struct {
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
 func StartServer(cfg sdkaws.Config) {
 
-	// Health Endpoint
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("OK"))
+	store := incident.NewDynamoStore(cfg)
+	mux := http.NewServeMux()
+
+	// ---------------- HEALTH ----------------
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		respondJSON(w, http.StatusOK, JSONResponse{Message: "Server healthy"})
 	})
 
-	// Monitoring Endpoint (optional)
-	http.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
+	// ---------------- MONITOR ----------------
+	mux.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
 
-		instanceID, err := aws.GetFirstEC2InstanceID(cfg)
+		_, instanceType, cpu, err := fetchInstanceData(cfg)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		instanceType, err := aws.GetInstanceType(cfg, instanceID)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		cpu, err := aws.GetCPUUtilization(cfg, instanceID)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		result := policy.EvaluatePolicy(cpu, instanceType)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		respondJSON(w, http.StatusOK, JSONResponse{Data: result})
 	})
 
-	// Create Incident Endpoint
-	http.HandleFunc("/incident", func(w http.ResponseWriter, r *http.Request) {
+	// ---------------- CREATE INCIDENT ----------------
+	mux.HandleFunc("/incident", func(w http.ResponseWriter, r *http.Request) {
 
-		instanceID, err := aws.GetFirstEC2InstanceID(cfg)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
+		if r.Method != http.MethodPost {
+			respondJSON(w, http.StatusMethodNotAllowed, JSONResponse{Error: "POST required"})
 			return
 		}
 
-		instanceType, err := aws.GetInstanceType(cfg, instanceID)
+		instanceID, instanceType, cpu, err := fetchInstanceData(cfg)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		cpu, err := aws.GetCPUUtilization(cfg, instanceID)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		result := policy.EvaluatePolicy(cpu, instanceType)
 
 		if result.Status != "HIGH_CPU" {
-			w.Write([]byte("System healthy. No incident created."))
+			respondJSON(w, http.StatusOK, JSONResponse{
+				Message: "System healthy. No incident created.",
+			})
 			return
 		}
 
 		inc := &incident.Incident{
+			ID:             generateID(),
 			InstanceID:     instanceID,
 			InstanceType:   instanceType,
 			CPU:            cpu,
@@ -84,55 +79,125 @@ func StartServer(cfg sdkaws.Config) {
 			CreatedAt:      time.Now(),
 		}
 
-		id := incident.Create(inc)
+		if err := store.Create(r.Context(), inc); err != nil {
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
+			return
+		}
 
-		log.Printf("[INCIDENT %s] State changed to %s", id, inc.State)
+		logStateChange(inc.ID, string(inc.State))
 
-		inc.State = incident.Proposed
-		log.Printf("[INCIDENT %s] State changed to %s", id, inc.State)
-
-		w.Write([]byte("Incident created with ID: " + id))
+		respondJSON(w, http.StatusCreated, JSONResponse{
+			Message: "Incident created",
+			Data:    map[string]string{"incident_id": inc.ID},
+		})
 	})
 
-	// Approve Incident Endpoint
-	http.HandleFunc("/approve/", func(w http.ResponseWriter, r *http.Request) {
+	// ---------------- APPROVE INCIDENT ----------------
+	mux.HandleFunc("/approve/", func(w http.ResponseWriter, r *http.Request) {
 
-		id := r.URL.Path[len("/approve/"):]
+		if r.Method != http.MethodPost {
+			respondJSON(w, http.StatusMethodNotAllowed, JSONResponse{Error: "POST required"})
+			return
+		}
 
-		inc, ok := incident.Get(id)
-		if !ok {
-			http.Error(w, "Incident not found", 404)
+		id := strings.TrimPrefix(r.URL.Path, "/approve/")
+
+		inc, err := store.Get(r.Context(), id)
+		if err != nil {
+			respondJSON(w, http.StatusNotFound, JSONResponse{Error: "Incident not found"})
 			return
 		}
 
 		scaler := execution.NewEC2Scaler(cfg)
 
+		// APPROVED
 		inc.State = incident.Approved
-		log.Printf("[INCIDENT %s] State changed to %s", id, inc.State)
+		store.Create(r.Context(), inc)
+	logStateChange(id, string(inc.State))
+
+		targetType := "t3.medium"
 
 		// Dry Run
-		err := scaler.DryRun(inc.InstanceID, "t3.medium")
-		if err != nil {
-			http.Error(w, err.Error(), 500)
+		if err := scaler.DryRun(inc.InstanceID, targetType); err != nil {
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		// Execute
-		err = scaler.Execute(inc.InstanceID, "t3.medium")
-		if err != nil {
-			http.Error(w, err.Error(), 500)
+		if err := scaler.Execute(inc.InstanceID, targetType); err != nil {
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		inc.State = incident.Executed
-		log.Printf("[INCIDENT %s] State changed to %s", id, inc.State)
+		store.Create(r.Context(), inc)
+logStateChange(id, string(inc.State))
+
+		time.Sleep(20 * time.Second)
+
+		newCPU, err := aws.GetCPUUtilization(cfg, inc.InstanceID)
+		if err != nil {
+			respondJSON(w, http.StatusInternalServerError, JSONResponse{Error: err.Error()})
+			return
+		}
+
+		if newCPU > 80 {
+			scaler.Rollback(inc.InstanceID, inc.InstanceType)
+			inc.State = incident.Detected
+			store.Create(r.Context(), inc)
+			logStateChange(id, string(inc.State))
+
+			respondJSON(w, http.StatusOK, JSONResponse{
+				Message: "Rollback executed. Issue persists.",
+			})
+			return
+		}
 
 		inc.State = incident.Verified
-		log.Printf("[INCIDENT %s] State changed to %s", id, inc.State)
+		store.Create(r.Context(), inc)
+	logStateChange(id, string(inc.State))
 
-		w.Write([]byte("Incident executed successfully"))
+		respondJSON(w, http.StatusOK, JSONResponse{
+			Message: "Incident resolved successfully",
+		})
 	})
 
-	log.Println("Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8081", nil))
+	log.Println("🚀 Server running on :8081")
+	log.Fatal(http.ListenAndServe(":8081", mux))
+}
+
+// ---------------- HELPERS ----------------
+
+func generateID() string {
+	return fmt.Sprintf("INC-%d", time.Now().UnixNano())
+}
+
+func respondJSON(w http.ResponseWriter, status int, payload JSONResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(payload)
+}
+
+func logStateChange(id string, state string) {
+	log.Printf("[INCIDENT %s] State changed to %s", id, state)
+}
+
+func fetchInstanceData(cfg sdkaws.Config) (string, string, float64, error) {
+
+	instanceID, err := aws.GetFirstEC2InstanceID(cfg)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	instanceType, err := aws.GetInstanceType(cfg, instanceID)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	cpu, err := aws.GetCPUUtilization(cfg, instanceID)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	return instanceID, instanceType, cpu, nil
 }
