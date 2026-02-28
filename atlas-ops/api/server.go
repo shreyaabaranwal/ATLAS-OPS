@@ -10,9 +10,9 @@ import (
 
 	"atlas-ops/aws"
 	"atlas-ops/incident"
+	"atlas-ops/infra"
 	"atlas-ops/policy"
 	"atlas-ops/queue"
-	"atlas-ops/infra"
 
 	sdkaws "github.com/aws/aws-sdk-go-v2/aws"
 )
@@ -25,45 +25,49 @@ type JSONResponse struct {
 
 func StartServer(cfg sdkaws.Config) {
 
-	// 🔹 Incident store
-	store := incident.NewDynamoStore(cfg, "atlas-incidents")
+	// ---------------- STORES ----------------
 
-	// 🔹 Infra metrics store
-	infraStore := infra.NewStore(store.Client)
+	incidentStore := incident.NewDynamoStore(cfg, "atlas-incidents")
+	metricsStore := infra.NewMetricsStore(cfg, "atlas-metrics")
 
-	// 🔹 Replace with your real Queue URL
 	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
 	sqsClient := queue.NewSQSClient(cfg, queueURL)
 
 	mux := http.NewServeMux()
 
 	// ---------------- HEALTH ----------------
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		respondJSON(w, http.StatusOK, JSONResponse{Message: "Server healthy"})
+		respondJSON(w, http.StatusOK, JSONResponse{
+			Message: "Server healthy",
+		})
 	})
 
-	// ---------------- MONITOR ----------------
+	// ---------------- MONITOR (Trend Engine) ----------------
+
 	mux.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
 
-		instanceID, instanceType, cpu, err := fetchInstanceData(cfg)
+		instanceID, _, cpu, err := fetchInstanceData(cfg)
 		if err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
-		// 🔥 Save CPU snapshot in atlas-metrics
-		err = infraStore.SaveMetric(r.Context(), instanceID, cpu)
-		if err != nil {
-			log.Println("Failed to save CPU metric:", err)
+		// Save metric snapshot
+		if err := metricsStore.SaveMetric(r.Context(), instanceID, cpu); err != nil {
+			log.Println("Metric save failed:", err)
 		}
 
-		// Keep current simple policy
-		result := policy.EvaluatePolicy(cpu, instanceType)
+		// Evaluate rolling trend
+		result := policy.EvaluateTrend(metricsStore, instanceID)
 
-		respondJSON(w, 200, JSONResponse{Data: result})
+		respondJSON(w, 200, JSONResponse{
+			Data: result,
+		})
 	})
 
 	// ---------------- CREATE INCIDENT ----------------
+
 	mux.HandleFunc("/incident", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
@@ -77,11 +81,15 @@ func StartServer(cfg sdkaws.Config) {
 			return
 		}
 
-		result := policy.EvaluatePolicy(cpu, instanceType)
+		// Save metric before evaluation
+		_ = metricsStore.SaveMetric(r.Context(), instanceID, cpu)
+
+		result := policy.EvaluateTrend(metricsStore, instanceID)
 
 		if result.Status != "HIGH_CPU" {
 			respondJSON(w, 200, JSONResponse{
 				Message: "System healthy. No incident created.",
+				Data:    result,
 			})
 			return
 		}
@@ -96,7 +104,7 @@ func StartServer(cfg sdkaws.Config) {
 			CreatedAt:      time.Now(),
 		}
 
-		if err := store.Create(r.Context(), inc); err != nil {
+		if err := incidentStore.Create(r.Context(), inc); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
@@ -110,6 +118,7 @@ func StartServer(cfg sdkaws.Config) {
 	})
 
 	// ---------------- APPROVE INCIDENT ----------------
+
 	mux.HandleFunc("/approve/", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
@@ -119,22 +128,21 @@ func StartServer(cfg sdkaws.Config) {
 
 		id := strings.TrimPrefix(r.URL.Path, "/approve/")
 
-		inc, err := store.Get(r.Context(), id)
+		inc, err := incidentStore.Get(r.Context(), id)
 		if err != nil {
 			respondJSON(w, 404, JSONResponse{Error: "Incident not found"})
 			return
 		}
 
-		// Mark Approved
 		inc.State = incident.Approved
-		if err := store.Update(r.Context(), inc); err != nil {
+
+		if err := incidentStore.Update(r.Context(), inc); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
 		logStateChange(id, inc.State)
 
-		// Send to SQS
 		if err := sqsClient.SendMessage(r.Context(), inc.ID); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
@@ -142,22 +150,6 @@ func StartServer(cfg sdkaws.Config) {
 
 		respondJSON(w, 200, JSONResponse{
 			Message: "Incident sent to processing queue",
-		})
-	})
-
-	// ---------------- METRICS ----------------
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-
-		metrics, err := store.GetMetrics(r.Context())
-		if err != nil {
-			respondJSON(w, http.StatusInternalServerError, JSONResponse{
-				Error: err.Error(),
-			})
-			return
-		}
-
-		respondJSON(w, http.StatusOK, JSONResponse{
-			Data: metrics,
 		})
 	})
 

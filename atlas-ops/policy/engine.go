@@ -1,41 +1,94 @@
 package policy
 
-type Recommendation struct {
+import (
+	"context"
+
+	"atlas-ops/infra"
+)
+
+type Decision struct {
 	Status         string  `json:"status"`
-	CPU            float64 `json:"cpu"`
-	InstanceType   string  `json:"instance_type"`
+	Confidence     float64 `json:"confidence"`
+	AverageCPU     float64 `json:"average_cpu"`
+	Slope          float64 `json:"slope"`
 	Recommendation string  `json:"recommendation"`
 }
 
-func EvaluatePolicy(cpu float64, instanceType string) Recommendation {
+func EvaluateTrend(store *infra.MetricsStore, instanceID string) Decision {
 
-	rec := Recommendation{
-		CPU:          cpu,
-		InstanceType: instanceType,
-	}
+	ctx := context.Background()
 
-	if cpu > 80 {
-		rec.Status = "HIGH_CPU"
-
-		switch instanceType {
-		case "t2.micro":
-			rec.Recommendation = "Upgrade to t3.medium"
-		case "t3.medium":
-			rec.Recommendation = "Upgrade to t3.large"
-		default:
-			rec.Recommendation = "Consider vertical scaling"
+	metrics, err := store.GetLast5Minutes(ctx, instanceID)
+	if err != nil || len(metrics) == 0 {
+		return Decision{
+			Status: "INSUFFICIENT_DATA",
 		}
-
-		return rec
 	}
 
-	if cpu > 50 {
-		rec.Status = "MODERATE_LOAD"
-		rec.Recommendation = "Monitor closely"
-		return rec
+	avg := calculateAverage(metrics)
+	slope := calculateSlope(metrics)
+	conf := calculateConfidence(avg, slope, len(metrics))
+
+	if avg > 70 && conf > 0.6 {
+		return Decision{
+			Status:         "HIGH_CPU",
+			Confidence:     conf,
+			AverageCPU:     avg,
+			Slope:          slope,
+			Recommendation: "Scale up instance",
+		}
 	}
 
-	rec.Status = "HEALTHY"
-	rec.Recommendation = "No action needed"
-	return rec
+	return Decision{
+		Status:     "HEALTHY",
+		Confidence: conf,
+		AverageCPU: avg,
+		Slope:      slope,
+	}
+}
+
+func calculateAverage(metrics []infra.Metric) float64 {
+
+	if len(metrics) == 0 {
+		return 0
+	}
+
+	sum := 0.0
+	for _, m := range metrics {
+		sum += m.CPU
+	}
+
+	return sum / float64(len(metrics))
+}
+
+func calculateSlope(metrics []infra.Metric) float64 {
+
+	if len(metrics) < 2 {
+		return 0
+	}
+
+	first := metrics[0].CPU
+	last := metrics[len(metrics)-1].CPU
+
+	return last - first
+}
+
+func calculateConfidence(avg float64, slope float64, samples int) float64 {
+
+	loadFactor := avg / 100.0
+
+	trendFactor := 0.0
+	if slope > 0 {
+		trendFactor = 0.3
+	}
+
+	durationFactor := float64(samples) / 10.0
+
+	conf := loadFactor*0.5 + trendFactor + durationFactor*0.2
+
+	if conf > 1 {
+		return 1
+	}
+
+	return conf
 }
