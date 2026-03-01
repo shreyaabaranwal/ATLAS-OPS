@@ -8,6 +8,9 @@ const (
 	Detected   State = "DETECTED"
 	Proposed   State = "PROPOSED"
 	Approved   State = "APPROVED"
+
+	Executing  State = "EXECUTING"   // 🔥 Distributed lock state
+
 	Simulated  State = "SIMULATED"
 	Executed   State = "EXECUTED"
 	Verified   State = "VERIFIED"
@@ -15,16 +18,17 @@ const (
 )
 
 type Incident struct {
-	ID               string     `dynamodbav:"id"`
-	InstanceID       string     `dynamodbav:"instance_id"`
-	InstanceType     string     `dynamodbav:"instance_type"`
-	CPU              float64    `dynamodbav:"cpu"`
-	State            State      `dynamodbav:"state"`
-	Recommendation   string     `dynamodbav:"recommendation"`
-	CreatedAt        time.Time  `dynamodbav:"created_at"`
-	
-	
-	
+	ID             string    `dynamodbav:"id"`
+	InstanceID     string    `dynamodbav:"instance_id"`
+	InstanceType   string    `dynamodbav:"instance_type"`
+	CPU            float64   `dynamodbav:"cpu"`
+	State          State     `dynamodbav:"state"`
+	Recommendation string    `dynamodbav:"recommendation"`
+	CreatedAt      time.Time `dynamodbav:"created_at"`
+
+	// 🔥 Distributed Safety
+	ExecutionAttempts int `dynamodbav:"execution_attempts,omitempty"`
+
 	// 🔥 Verification fields
 	CPUAfter         float64    `dynamodbav:"cpu_after,omitempty"`
 	VerifiedAt       *time.Time `dynamodbav:"verified_at,omitempty"`

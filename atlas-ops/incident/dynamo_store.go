@@ -120,3 +120,49 @@ func (d *DynamoStore) Update(ctx context.Context, inc *Incident) error {
 }
 
 
+
+func (d *DynamoStore) TransitionState(
+	ctx context.Context,
+	id string,
+	from State,
+	to State,
+) error {
+
+	_, err := d.Client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.Table),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: id},
+		},
+		UpdateExpression: aws.String("SET #s = :newState"),
+		ConditionExpression: aws.String("#s = :expectedState"),
+		ExpressionAttributeNames: map[string]string{
+			"#s": "state",
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":newState": &types.AttributeValueMemberS{
+				Value: string(to),
+			},
+			":expectedState": &types.AttributeValueMemberS{
+				Value: string(from),
+			},
+		},
+	})
+
+	return err
+}
+
+func (d *DynamoStore) IncrementAttempts(ctx context.Context, id string) error {
+
+	_, err := d.Client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.Table),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: id},
+		},
+		UpdateExpression: aws.String("ADD execution_attempts :inc"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":inc": &types.AttributeValueMemberN{Value: "1"},
+		},
+	})
+
+	return err
+}

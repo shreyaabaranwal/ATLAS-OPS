@@ -42,6 +42,17 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 
 			log.Println("Processing incident:", incidentID)
 
+			// 🔥 1️⃣ Atomic Lock: APPROVED → EXECUTING
+			err := store.TransitionState(ctx, incidentID, incident.Approved, incident.Executing)
+			if err != nil {
+				log.Println("Another worker already processing or invalid state. Skipping.")
+				continue
+			}
+
+			// 🔥 Increment execution attempts
+			_ = store.IncrementAttempts(ctx, incidentID)
+
+			// Fetch updated record
 			inc, err := store.Get(ctx, incidentID)
 			if err != nil {
 				log.Println("Incident fetch error:", err)
@@ -54,8 +65,7 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			err = scaler.DryRun(ctx, inc.InstanceID, targetType)
 			if err != nil {
 
-				inc.State = incident.RolledBack
-				store.Update(ctx, inc)
+				store.TransitionState(ctx, inc.ID, incident.Executing, incident.RolledBack)
 
 				_ = audit.Save(ctx, &incident.AuditLog{
 					IncidentID: inc.ID,
@@ -67,9 +77,6 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 
 				continue
 			}
-
-			inc.State = incident.Simulated
-			store.Update(ctx, inc)
 
 			_ = audit.Save(ctx, &incident.AuditLog{
 				IncidentID: inc.ID,
@@ -85,8 +92,7 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			err = scaler.Execute(ctx, inc.InstanceID, targetType)
 			if err != nil {
 
-				inc.State = incident.RolledBack
-				store.Update(ctx, inc)
+				store.TransitionState(ctx, inc.ID, incident.Executing, incident.RolledBack)
 
 				_ = audit.Save(ctx, &incident.AuditLog{
 					IncidentID: inc.ID,
@@ -99,8 +105,7 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 				continue
 			}
 
-			inc.State = incident.Executed
-			store.Update(ctx, inc)
+			_ = store.TransitionState(ctx, inc.ID, incident.Executing, incident.Executed)
 
 			_ = audit.Save(ctx, &incident.AuditLog{
 				IncidentID: inc.ID,
@@ -124,8 +129,9 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			if newCPU < inc.CPU {
 
 				now := time.Now()
-				inc.State = incident.Verified
 				inc.VerifiedAt = &now
+
+				_ = store.TransitionState(ctx, inc.ID, incident.Executed, incident.Verified)
 
 				_ = audit.Save(ctx, &incident.AuditLog{
 					IncidentID: inc.ID,
@@ -139,7 +145,8 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			} else {
 
 				_ = scaler.Rollback(ctx, inc.InstanceID, inc.InstanceType)
-				inc.State = incident.RolledBack
+
+				_ = store.TransitionState(ctx, inc.ID, incident.Executed, incident.RolledBack)
 
 				_ = audit.Save(ctx, &incident.AuditLog{
 					IncidentID: inc.ID,
@@ -151,14 +158,12 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 				})
 			}
 
-			store.Update(ctx, inc)
-
 			_, _ = sqsClient.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      &queueURL,
 				ReceiptHandle: msg.ReceiptHandle,
 			})
 
-			log.Println("✅ Incident lifecycle completed.")
+			log.Println("✅ Incident lifecycle completed safely.")
 		}
 	}
 }
