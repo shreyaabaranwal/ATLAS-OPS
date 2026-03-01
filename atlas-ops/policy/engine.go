@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"math"
 
 	"atlas-ops/infra"
 )
@@ -11,7 +12,7 @@ type Decision struct {
 	Confidence     float64 `json:"confidence"`
 	AverageCPU     float64 `json:"average_cpu"`
 	Slope          float64 `json:"slope"`
-	Recommendation string  `json:"recommendation"`
+	Recommendation string  `json:"recommendation,omitempty"`
 }
 
 func EvaluateTrend(store *infra.MetricsStore, instanceID string) Decision {
@@ -25,15 +26,20 @@ func EvaluateTrend(store *infra.MetricsStore, instanceID string) Decision {
 		}
 	}
 
-	avg := calculateAverage(metrics)
-	slope := calculateSlope(metrics)
-	conf := calculateConfidence(avg, slope, len(metrics))
+	alpha := 0.3
 
-	if avg > 70 && conf > 0.6 {
+	ema := calculateEMA(metrics, alpha)
+	slope := calculateSlope(metrics)
+	current := metrics[len(metrics)-1].CPU
+	spike := detectSpike(current, ema)
+
+	conf := calculateConfidence(ema, slope, spike, len(metrics))
+
+	if ema > 75 && conf > 0.7 {
 		return Decision{
 			Status:         "HIGH_CPU",
 			Confidence:     conf,
-			AverageCPU:     avg,
+			AverageCPU:     ema,
 			Slope:          slope,
 			Recommendation: "Scale up instance",
 		}
@@ -42,24 +48,29 @@ func EvaluateTrend(store *infra.MetricsStore, instanceID string) Decision {
 	return Decision{
 		Status:     "HEALTHY",
 		Confidence: conf,
-		AverageCPU: avg,
+		AverageCPU: ema,
 		Slope:      slope,
 	}
 }
 
-func calculateAverage(metrics []infra.Metric) float64 {
+// ---------------- EMA ----------------
+
+func calculateEMA(metrics []infra.Metric, alpha float64) float64 {
 
 	if len(metrics) == 0 {
 		return 0
 	}
 
-	sum := 0.0
-	for _, m := range metrics {
-		sum += m.CPU
+	ema := metrics[0].CPU
+
+	for i := 1; i < len(metrics); i++ {
+		ema = alpha*metrics[i].CPU + (1-alpha)*ema
 	}
 
-	return sum / float64(len(metrics))
+	return ema
 }
+
+// ---------------- NORMALIZED SLOPE ----------------
 
 func calculateSlope(metrics []infra.Metric) float64 {
 
@@ -70,25 +81,49 @@ func calculateSlope(metrics []infra.Metric) float64 {
 	first := metrics[0].CPU
 	last := metrics[len(metrics)-1].CPU
 
-	return last - first
+	rawSlope := last - first
+
+	// Normalize slope to prevent over-influence
+	return rawSlope / float64(len(metrics))
 }
 
-func calculateConfidence(avg float64, slope float64, samples int) float64 {
+// ---------------- SPIKE DETECTION ----------------
 
-	loadFactor := avg / 100.0
+func detectSpike(current float64, ema float64) float64 {
 
-	trendFactor := 0.0
+	diff := current - ema
+
+	if diff <= 0 {
+		return 0
+	}
+
+	// Normalize spike between 0–1
+	return math.Min(diff/100.0, 1)
+}
+
+// ---------------- CONFIDENCE ENGINE ----------------
+
+func calculateConfidence(
+	ema float64,
+	slope float64,
+	spike float64,
+	sampleCount int,
+) float64 {
+
+	loadScore := ema / 100.0
+
+	trendScore := 0.0
 	if slope > 0 {
-		trendFactor = 0.3
+		trendScore = math.Min(slope/10.0, 1)
 	}
 
-	durationFactor := float64(samples) / 10.0
+	stabilityScore := math.Min(float64(sampleCount)/10.0, 1)
 
-	conf := loadFactor*0.5 + trendFactor + durationFactor*0.2
+	confidence :=
+		loadScore*0.5 +
+			trendScore*0.2 +
+			spike*0.2 +
+			stabilityScore*0.1
 
-	if conf > 1 {
-		return 1
-	}
-
-	return conf
+	return math.Min(confidence, 1)
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
+const MaxExecutionAttempts = 3
+
 func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore, audit *incident.AuditStore) {
 
 	sqsClient := queue.NewSQSClient(cfg, queueURL)
@@ -42,89 +44,67 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 
 			log.Println("Processing incident:", incidentID)
 
-			// 🔥 1️⃣ Atomic Lock: APPROVED → EXECUTING
+			// 🔐 Atomic lock
 			err := store.TransitionState(ctx, incidentID, incident.Approved, incident.Executing)
 			if err != nil {
 				log.Println("Another worker already processing or invalid state. Skipping.")
 				continue
 			}
 
-			// 🔥 Increment execution attempts
+			// Increment attempts
 			_ = store.IncrementAttempts(ctx, incidentID)
 
-			// Fetch updated record
 			inc, err := store.Get(ctx, incidentID)
 			if err != nil {
-				log.Println("Incident fetch error:", err)
+				log.Println("Fetch error:", err)
 				continue
 			}
 
-			targetType := "t3.medium"
+			// 🔥 CIRCUIT BREAKER
+			if inc.ExecutionAttempts >= MaxExecutionAttempts {
 
-			// ---------------- DRY RUN ----------------
-			err = scaler.DryRun(ctx, inc.InstanceID, targetType)
-			if err != nil {
+				log.Println("Circuit breaker triggered")
 
-				store.TransitionState(ctx, inc.ID, incident.Executing, incident.RolledBack)
+				_ = store.TransitionState(ctx, inc.ID, incident.Executing, incident.FailedPermanent)
 
 				_ = audit.Save(ctx, &incident.AuditLog{
 					IncidentID: inc.ID,
-					Action:     "DRY_RUN",
+					Action:     "CIRCUIT_BREAKER",
 					Actor:      "SYSTEM",
-					Result:     "FAILED",
-					CPUBefore:  inc.CPU,
+					Result:     "FAILED_PERMANENT",
+				})
+
+				// DELETE message because permanent failure
+				_, _ = sqsClient.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+					QueueUrl:      &queueURL,
+					ReceiptHandle: msg.ReceiptHandle,
 				})
 
 				continue
 			}
 
-			_ = audit.Save(ctx, &incident.AuditLog{
-				IncidentID: inc.ID,
-				Action:     "DRY_RUN",
-				Actor:      "SYSTEM",
-				Result:     "SUCCESS",
-				CPUBefore:  inc.CPU,
-			})
-
-			// ---------------- EXECUTE ----------------
-			startTime := time.Now()
+			targetType := "t3.medium" // change to invalid for DLQ test
 
 			err = scaler.Execute(ctx, inc.InstanceID, targetType)
 			if err != nil {
 
-				store.TransitionState(ctx, inc.ID, incident.Executing, incident.RolledBack)
+				log.Println("Execution failed. Will retry via SQS.")
 
-				_ = audit.Save(ctx, &incident.AuditLog{
-					IncidentID: inc.ID,
-					Action:     "EXECUTION",
-					Actor:      "SYSTEM",
-					Result:     "FAILED",
-					CPUBefore:  inc.CPU,
-				})
+				_ = store.TransitionState(ctx, inc.ID, incident.Executing, incident.Approved)
 
+				// ❌ DO NOT DELETE MESSAGE
+				// Let SQS retry
 				continue
 			}
 
 			_ = store.TransitionState(ctx, inc.ID, incident.Executing, incident.Executed)
 
-			_ = audit.Save(ctx, &incident.AuditLog{
-				IncidentID: inc.ID,
-				Action:     "EXECUTION",
-				Actor:      "SYSTEM",
-				Result:     "EXECUTED",
-				CPUBefore:  inc.CPU,
-			})
-
-			// ---------------- VERIFY ----------------
 			time.Sleep(30 * time.Second)
 
 			newCPU, err := aws.GetCPUUtilization(cfg, inc.InstanceID)
 			if err != nil {
 				continue
 			}
-
-			inc.CPUAfter = newCPU
-			inc.ExecutionTimeSec = int(time.Since(startTime).Seconds())
 
 			if newCPU < inc.CPU {
 
@@ -147,17 +127,9 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 				_ = scaler.Rollback(ctx, inc.InstanceID, inc.InstanceType)
 
 				_ = store.TransitionState(ctx, inc.ID, incident.Executed, incident.RolledBack)
-
-				_ = audit.Save(ctx, &incident.AuditLog{
-					IncidentID: inc.ID,
-					Action:     "ROLLBACK",
-					Actor:      "SYSTEM",
-					Result:     "ROLLED_BACK",
-					CPUBefore:  inc.CPU,
-					CPUAfter:   newCPU,
-				})
 			}
 
+			// ✅ Delete only on success path
 			_, _ = sqsClient.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      &queueURL,
 				ReceiptHandle: msg.ReceiptHandle,

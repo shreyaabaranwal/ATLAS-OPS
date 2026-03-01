@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 type AuditLog struct {
@@ -34,7 +35,6 @@ func NewAuditStore(cfg aws.Config, table string) *AuditStore {
 
 func (a *AuditStore) Save(ctx context.Context, logEntry *AuditLog) error {
 
-	// Always ensure timestamp
 	if logEntry.Timestamp == 0 {
 		logEntry.Timestamp = time.Now().Unix()
 	}
@@ -54,4 +54,25 @@ func (a *AuditStore) Save(ctx context.Context, logEntry *AuditLog) error {
 	}
 
 	return nil
+}
+
+func (a *AuditStore) GetTimeline(ctx context.Context, incidentID string) ([]AuditLog, error) {
+
+	out, err := a.Client.Query(ctx, &dynamodb.QueryInput{
+		TableName: aws.String(a.Table),
+		KeyConditionExpression: aws.String("incident_id = :id"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":id": &types.AttributeValueMemberS{Value: incidentID},
+		},
+		ScanIndexForward: aws.Bool(true),
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	var logs []AuditLog
+	err = attributevalue.UnmarshalListOfMaps(out.Items, &logs)
+
+	return logs, err
 }

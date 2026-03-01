@@ -2,19 +2,17 @@ package incident
 
 import "time"
 
-type State string
+type IncidentState string
 
 const (
-	Detected   State = "DETECTED"
-	Proposed   State = "PROPOSED"
-	Approved   State = "APPROVED"
-
-	Executing  State = "EXECUTING"   // 🔥 Distributed lock state
-
-	Simulated  State = "SIMULATED"
-	Executed   State = "EXECUTED"
-	Verified   State = "VERIFIED"
-	RolledBack State = "ROLLED_BACK"
+	Detected        State = "DETECTED"
+	Proposed        State = "PROPOSED"
+	Approved        State = "APPROVED"
+	Executing       State = "EXECUTING"   // distributed lock
+	Simulated       State = "SIMULATED"
+	ExecutedState   State = "EXECUTED"
+	 VerifiedState   State = "VERIFIED"
+	FailedPermanent State = "FAILED_PERMANENT"
 )
 
 type Incident struct {
@@ -26,10 +24,10 @@ type Incident struct {
 	Recommendation string    `dynamodbav:"recommendation"`
 	CreatedAt      time.Time `dynamodbav:"created_at"`
 
-	// 🔥 Distributed Safety
+	// Circuit breaker safety
 	ExecutionAttempts int `dynamodbav:"execution_attempts,omitempty"`
 
-	// 🔥 Verification fields
+	// Verification fields
 	CPUAfter         float64    `dynamodbav:"cpu_after,omitempty"`
 	VerifiedAt       *time.Time `dynamodbav:"verified_at,omitempty"`
 	ExecutionTimeSec int        `dynamodbav:"execution_time_sec,omitempty"`

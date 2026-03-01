@@ -2,6 +2,14 @@ package incident
 
 import "context"
 
+type State string
+
+const (
+	Executed  State = "executed"
+	Verified  State = "verified"
+	RolledBack State = "rolled_back"
+)
+
 type Metrics struct {
 	TotalIncidents   int            `json:"total_incidents"`
 	ByState          map[State]int  `json:"by_state"`
@@ -34,7 +42,7 @@ func (s *DynamoStore) GetMetrics(ctx context.Context) (*Metrics, error) {
 			metrics.TotalExecutions++
 		}
 
-		// Count success
+		// Count succes//////////////////////////////////////s
 		if inc.State == Verified {
 			metrics.ExecutionSuccess++
 		}

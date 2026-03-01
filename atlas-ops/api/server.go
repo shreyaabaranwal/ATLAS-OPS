@@ -25,8 +25,6 @@ type JSONResponse struct {
 
 func StartServer(cfg sdkaws.Config) {
 
-	// ---------------- STORES ----------------
-
 	incidentStore := incident.NewDynamoStore(cfg, "atlas-incidents")
 	metricsStore := infra.NewMetricsStore(cfg, "atlas-metrics")
 	auditStore := incident.NewAuditStore(cfg, "atlas-audit")
@@ -36,16 +34,12 @@ func StartServer(cfg sdkaws.Config) {
 
 	mux := http.NewServeMux()
 
-	// ---------------- HEALTH ----------------
-
+	// HEALTH
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		respondJSON(w, http.StatusOK, JSONResponse{
-			Message: "Server healthy",
-		})
+		respondJSON(w, 200, JSONResponse{Message: "Server healthy"})
 	})
 
-	// ---------------- MONITOR (Trend Engine) ----------------
-
+	// MONITOR
 	mux.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
 
 		instanceID, _, cpu, err := fetchInstanceData(cfg)
@@ -54,21 +48,14 @@ func StartServer(cfg sdkaws.Config) {
 			return
 		}
 
-		// Save metric snapshot
-		if err := metricsStore.SaveMetric(r.Context(), instanceID, cpu); err != nil {
-			log.Println("Metric save failed:", err)
-		}
+		_ = metricsStore.SaveMetric(r.Context(), instanceID, cpu)
 
-		// Evaluate rolling trend
 		result := policy.EvaluateTrend(metricsStore, instanceID)
 
-		respondJSON(w, 200, JSONResponse{
-			Data: result,
-		})
+		respondJSON(w, 200, JSONResponse{Data: result})
 	})
 
-	// ---------------- CREATE INCIDENT ----------------
-
+	// CREATE INCIDENT
 	mux.HandleFunc("/incident", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
@@ -81,9 +68,6 @@ func StartServer(cfg sdkaws.Config) {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
-
-		// Save metric before evaluation
-		_ = metricsStore.SaveMetric(r.Context(), instanceID, cpu)
 
 		result := policy.EvaluateTrend(metricsStore, instanceID)
 
@@ -110,16 +94,13 @@ func StartServer(cfg sdkaws.Config) {
 			return
 		}
 
-		logStateChange(inc.ID, inc.State)
-
 		respondJSON(w, 201, JSONResponse{
 			Message: "Incident created",
 			Data:    map[string]string{"incident_id": inc.ID},
 		})
 	})
 
-	// ---------------- APPROVE INCIDENT ----------------
-
+	// APPROVE
 	mux.HandleFunc("/approve/", func(w http.ResponseWriter, r *http.Request) {
 
 		if r.Method != http.MethodPost {
@@ -135,17 +116,12 @@ func StartServer(cfg sdkaws.Config) {
 			return
 		}
 
-		// Update state
 		inc.State = incident.Approved
-
 		if err := incidentStore.Update(r.Context(), inc); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
 		}
 
-		logStateChange(id, inc.State)
-
-		// 🔥 AUDIT LOG (Approval)
 		_ = auditStore.Save(r.Context(), &incident.AuditLog{
 			IncidentID: inc.ID,
 			Action:     "APPROVAL",
@@ -153,7 +129,6 @@ func StartServer(cfg sdkaws.Config) {
 			Result:     "APPROVED",
 		})
 
-		// Send to SQS
 		if err := sqsClient.SendMessage(r.Context(), inc.ID); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
@@ -164,11 +139,23 @@ func StartServer(cfg sdkaws.Config) {
 		})
 	})
 
+	// TIMELINE
+	mux.HandleFunc("/timeline/", func(w http.ResponseWriter, r *http.Request) {
+
+		id := strings.TrimPrefix(r.URL.Path, "/timeline/")
+
+		logs, err := auditStore.GetTimeline(r.Context(), id)
+		if err != nil {
+			respondJSON(w, 500, JSONResponse{Error: err.Error()})
+			return
+		}
+
+		respondJSON(w, 200, JSONResponse{Data: logs})
+	})
+
 	log.Println("🚀 Server running on :8081")
 	log.Fatal(http.ListenAndServe(":8081", mux))
 }
-
-// ---------------- HELPERS ----------------
 
 func generateID() string {
 	return fmt.Sprintf("INC-%d", time.Now().UnixNano())
@@ -178,10 +165,6 @@ func respondJSON(w http.ResponseWriter, status int, payload JSONResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func logStateChange(id string, state incident.State) {
-	log.Printf("[INCIDENT %s] State changed to %s", id, state)
 }
 
 func fetchInstanceData(cfg sdkaws.Config) (string, string, float64, error) {

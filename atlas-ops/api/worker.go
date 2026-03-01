@@ -55,10 +55,14 @@ func processIncident(cfg sdkaws.Config, store *incident.DynamoStore, id string) 
 		return
 	}
 
-	inc.State = incident.RolledBack
+	inc.State = "rolled_back"
 	store.Update(ctx, inc)
 
 	log.Println("Incident rolled back successfully")
 	}
 
 }
+
+
+
+
