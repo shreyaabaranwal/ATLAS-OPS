@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"atlas-ops/aws"
 	"atlas-ops/execution"
 	"atlas-ops/incident"
 	"atlas-ops/queue"
@@ -63,6 +64,8 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			store.Update(ctx, inc)
 
 			// ---------------- 2️⃣ EXECUTE ----------------
+			startTime := time.Now()
+
 			err = scaler.Execute(ctx, inc.InstanceID, targetType)
 			if err != nil {
 				log.Println("Execution failed:", err)
@@ -75,13 +78,44 @@ func StartWorker(cfg sdkaws.Config, queueURL string, store *incident.DynamoStore
 			inc.State = incident.Executed
 			store.Update(ctx, inc)
 
+			log.Println("Execution successful. Starting verification...")
+
 			// ---------------- 3️⃣ VERIFY ----------------
-			time.Sleep(20 * time.Second)
+			time.Sleep(30 * time.Second) // stabilization wait
 
-			inc.State = incident.Verified
-			store.Update(ctx, inc)
+			newCPU, err := aws.GetCPUUtilization(cfg, inc.InstanceID)
+			if err != nil {
+				log.Println("Verification CPU fetch failed:", err)
+				continue
+			}
 
-			// Delete message from queue
+			// Store verification details
+			inc.CPUAfter = newCPU
+			inc.ExecutionTimeSec = int(time.Since(startTime).Seconds())
+
+			if newCPU < inc.CPU {
+				now := time.Now()
+				inc.State = incident.Verified
+				inc.VerifiedAt = &now
+
+				log.Println("Verification successful. CPU improved.")
+			} else {
+				log.Println("CPU did not improve. Rolling back...")
+
+				err := scaler.Rollback(ctx, inc.InstanceID, inc.InstanceType)
+				if err != nil {
+					log.Println("Rollback failed:", err)
+				}
+
+				inc.State = incident.RolledBack
+			}
+
+			err = store.Update(ctx, inc)
+			if err != nil {
+				log.Println("Failed to update incident:", err)
+			}
+
+			// ---------------- DELETE MESSAGE ----------------
 			_, err = sqsClient.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 				QueueUrl:      &queueURL,
 				ReceiptHandle: msg.ReceiptHandle,

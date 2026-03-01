@@ -102,23 +102,21 @@ func (d *DynamoStore) ScanAll(ctx context.Context) ([]*Incident, error) {
 }
 func (d *DynamoStore) Update(ctx context.Context, inc *Incident) error {
 
-	_, err := d.Client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+	item, err := attributevalue.MarshalMap(inc)
+	if err != nil {
+		return fmt.Errorf("marshal incident failed: %w", err)
+	}
+
+	_, err = d.Client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(d.Table),
-		Key: map[string]types.AttributeValue{
-			"id": &types.AttributeValueMemberS{Value: inc.ID},
-		},
-		UpdateExpression: aws.String("SET #s = :state"),
-		ExpressionAttributeNames: map[string]string{
-			"#s": "state",
-		},
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":state": &types.AttributeValueMemberS{Value: string(inc.State)},
-		},
+		Item:      item,
 	})
 
 	if err != nil {
-		return fmt.Errorf("update state failed: %w", err)
+		return fmt.Errorf("put item (update) failed: %w", err)
 	}
 
 	return nil
 }
+
+
