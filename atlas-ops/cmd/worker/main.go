@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 
-
 	"atlas-ops/incident"
 	"atlas-ops/worker"
 
@@ -13,18 +12,17 @@ import (
 
 func main() {
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	log.Println("🚀 Starting Worker...")
+
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		log.Fatalf("unable to load AWS config: %v", err)
+		log.Fatal("AWS config load failed:", err)
 	}
 
 	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
 
-	// 🔥 FIX — pass table name
-	tableName := "atlas-incidents"
+	incidentStore := incident.NewDynamoStore(cfg, "atlas-incidents")
+	auditStore := incident.NewAuditStore(cfg, "atlas-audit")
 
-	store := incident.NewDynamoStore(cfg, tableName)
-
-	log.Println("👷 Starting Worker service...")
-	worker.StartWorker(cfg, queueURL, store)
+	worker.StartWorker(cfg, queueURL, incidentStore, auditStore)
 }

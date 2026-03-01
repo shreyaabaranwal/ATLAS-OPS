@@ -29,6 +29,7 @@ func StartServer(cfg sdkaws.Config) {
 
 	incidentStore := incident.NewDynamoStore(cfg, "atlas-incidents")
 	metricsStore := infra.NewMetricsStore(cfg, "atlas-metrics")
+	auditStore := incident.NewAuditStore(cfg, "atlas-audit")
 
 	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
 	sqsClient := queue.NewSQSClient(cfg, queueURL)
@@ -134,6 +135,7 @@ func StartServer(cfg sdkaws.Config) {
 			return
 		}
 
+		// Update state
 		inc.State = incident.Approved
 
 		if err := incidentStore.Update(r.Context(), inc); err != nil {
@@ -143,6 +145,15 @@ func StartServer(cfg sdkaws.Config) {
 
 		logStateChange(id, inc.State)
 
+		// 🔥 AUDIT LOG (Approval)
+		_ = auditStore.Save(r.Context(), &incident.AuditLog{
+			IncidentID: inc.ID,
+			Action:     "APPROVAL",
+			Actor:      "USER",
+			Result:     "APPROVED",
+		})
+
+		// Send to SQS
 		if err := sqsClient.SendMessage(r.Context(), inc.ID); err != nil {
 			respondJSON(w, 500, JSONResponse{Error: err.Error()})
 			return
