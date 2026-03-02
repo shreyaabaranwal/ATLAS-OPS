@@ -154,7 +154,7 @@ func StartServer(cfg sdkaws.Config) {
 	})
 
 	log.Println("🚀 Server running on :8081")
-	log.Fatal(http.ListenAndServe(":8081", mux))
+	log.Fatal(http.ListenAndServe(":8081", enableCORS(mux)))
 }
 
 func generateID() string {
@@ -185,4 +185,19 @@ func fetchInstanceData(cfg sdkaws.Config) (string, string, float64, error) {
 	}
 
 	return instanceID, instanceType, cpu, nil
+}
+
+
+func enableCORS(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
+		if r.Method == http.MethodOptions {
+			return
+		}
+
+		h.ServeHTTP(w, r)
+	})
 }
