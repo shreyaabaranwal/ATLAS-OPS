@@ -49,7 +49,6 @@ func StartServer(cfg sdkaws.Config) {
 		}
 
 		_ = metricsStore.SaveMetric(r.Context(), instanceID, cpu)
-
 		result := policy.EvaluateTrend(metricsStore, instanceID)
 
 		respondJSON(w, 200, JSONResponse{Data: result})
@@ -139,44 +138,12 @@ func StartServer(cfg sdkaws.Config) {
 		})
 	})
 
-	// TIMELINE
-mux := http.NewServeMux()
-
-// HEALTH
-mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, 200, JSONResponse{Message: "Server healthy"})
-})
-
-// MONITOR
-mux.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
-
-	instanceID, _, cpu, err := fetchInstanceData(cfg)
-	if err != nil {
-		log.Println("Monitor error:", err)
-
-		respondJSON(w, 200, JSONResponse{
-			Data: map[string]interface{}{
-				"status":      "HEALTHY",
-				"confidence":  0.90,
-				"average_cpu": 35.0,
-				"slope":       0.02,
-			},
-		})
-		return
+	log.Println("🚀 Server running on :8081")
+	if err := http.ListenAndServe(":8081", enableCORS(mux)); err != nil {
+		log.Fatal(err)
 	}
-
-	_ = metricsStore.SaveMetric(r.Context(), instanceID, cpu)
-
-	result := policy.EvaluateTrend(metricsStore, instanceID)
-
-	respondJSON(w, 200, JSONResponse{Data: result})
-})
-
-log.Println("🚀 Server running on :8081")
-if err := http.ListenAndServe(":8081", enableCORS(mux)); err != nil {
-	log.Fatal(err)
 }
-		//
+
 func generateID() string {
 	return fmt.Sprintf("INC-%d", time.Now().UnixNano())
 }
