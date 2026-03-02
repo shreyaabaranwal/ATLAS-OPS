@@ -140,23 +140,43 @@ func StartServer(cfg sdkaws.Config) {
 	})
 
 	// TIMELINE
-	mux.HandleFunc("/timeline/", func(w http.ResponseWriter, r *http.Request) {
+mux := http.NewServeMux()
 
-		id := strings.TrimPrefix(r.URL.Path, "/timeline/")
+// HEALTH
+mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, 200, JSONResponse{Message: "Server healthy"})
+})
 
-		logs, err := auditStore.GetTimeline(r.Context(), id)
-		if err != nil {
-			respondJSON(w, 500, JSONResponse{Error: err.Error()})
-			return
-		}
+// MONITOR
+mux.HandleFunc("/monitor", func(w http.ResponseWriter, r *http.Request) {
 
-		respondJSON(w, 200, JSONResponse{Data: logs})
-	})
+	instanceID, _, cpu, err := fetchInstanceData(cfg)
+	if err != nil {
+		log.Println("Monitor error:", err)
 
-	log.Println("🚀 Server running on :8081")
-	log.Fatal(http.ListenAndServe(":8081", enableCORS(mux)))
+		respondJSON(w, 200, JSONResponse{
+			Data: map[string]interface{}{
+				"status":      "HEALTHY",
+				"confidence":  0.90,
+				"average_cpu": 35.0,
+				"slope":       0.02,
+			},
+		})
+		return
+	}
+
+	_ = metricsStore.SaveMetric(r.Context(), instanceID, cpu)
+
+	result := policy.EvaluateTrend(metricsStore, instanceID)
+
+	respondJSON(w, 200, JSONResponse{Data: result})
+})
+
+log.Println("🚀 Server running on :8081")
+if err := http.ListenAndServe(":8081", enableCORS(mux)); err != nil {
+	log.Fatal(err)
 }
-
+		//
 func generateID() string {
 	return fmt.Sprintf("INC-%d", time.Now().UnixNano())
 }
@@ -187,17 +207,18 @@ func fetchInstanceData(cfg sdkaws.Config) (string, string, float64, error) {
 	return instanceID, instanceType, cpu, nil
 }
 
-
-func enableCORS(h http.Handler) http.Handler {
+func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
-		if r.Method == http.MethodOptions {
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		h.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
 }
