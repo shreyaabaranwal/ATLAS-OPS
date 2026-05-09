@@ -18,9 +18,7 @@ func main() {
 	if err != nil {
 		log.Fatal("AWS config load failed:", err)
 	}
-
-	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
-
+	queueURL := "https://sqs.ap-south-1.amazonaws.com/606639293354/atlas-incident-queue"
 	incidentStore := incident.NewDynamoStore(cfg, "atlas-incidents")
 	auditStore := incident.NewAuditStore(cfg, "atlas-audit")
 
