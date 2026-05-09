@@ -1,26 +1,17 @@
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-.terraform.lock.hcl
+# Terraform generated files
+Teraform/.terraform/
+Teraform/*.tfstate
+Teraform/*.tfstate.*
+Teraform/.terraform.lock.hcl
 
-# Environment files
+# env
 .env
 .env.*
 
-# AWS credentials
+# aws
 .aws/
 credentials
 
-# Go build artifacts
-bin/
-*.exe
-*.out
-
-# IDE files
+# IDE
 .vscode/
 .idea/
-
-# OS junk
-.DS_Store
-Thumbs.db
