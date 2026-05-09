@@ -1,142 +1,449 @@
-Atlas Ops is an AI-native Operations Orchestrator that transforms how engineering teams manage cloud infrastructure. By integrating real-time voice interaction, computer vision for dashboard analysis, and a policy-aware reasoning engine, it transitions DevOps from reactive manual toil to "Human-in-the-Loop" autonomous remediation. Built for the Google Gemini Live and Amazon Nova AI hackathons, it demonstrates a production-grade approach to safe, auditable, and multimodal agentic operations.
+<div align="center">
 
-## The Problem: The "Toil" Gap
-Modern cloud environments generate massive telemetry data, yet incident response remains manual and fragmented. High-stakes "On-Call" shifts suffer from:
+# ⚡ ATLAS-OPS
+### Cloud Incident Detection & Automated Remediation System
 
-Context Switching: Engineers bounce between documentation, CLI, and metrics.
+*Detect infrastructure anomalies, evaluate policy, and execute recovery — with minimal human intervention.*
 
-Delayed MTTR: Manual root-cause analysis in complex microservices is slow.
+[![Go](https://img.shields.io/badge/Go-1.21-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
+[![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white)](https://aws.amazon.com)
+[![DynamoDB](https://img.shields.io/badge/DynamoDB-Storage-4053D6?style=for-the-badge&logo=amazondynamodb&logoColor=white)](https://aws.amazon.com/dynamodb)
+[![SQS](https://img.shields.io/badge/SQS-Queue-FF4F8B?style=for-the-badge&logo=amazonsqs&logoColor=white)](https://aws.amazon.com/sqs)
+[![Terraform](https://img.shields.io/badge/Terraform-IaC-7B42BC?style=for-the-badge&logo=terraform&logoColor=white)](https://terraform.io)
+[![React](https://img.shields.io/badge/React-Dashboard-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
 
-Automation Fear: High-risk actions (scaling/rollbacks) lack deterministic safety nets and dry-run validation.
+</div>
 
-💡 The Solution: Agentic Operations
-Atlas Ops acts as a "Senior SRE sitting next to you." It listens to voice commands via Gemini Live, analyzes real-time CloudWatch/Grafana screens via Vision, and executes safe, policy-governed actions across AWS and GCP. It doesn't just "chat"—it manages an Incident State Machine to ensure every action is verified and reversible.
+---
 
-## Core Features
-1. Multimodal Interaction (Live Voice + Vision)
-Voice-First Interface: Hands-free incident management using Gemini Live for real-time dialogue and interruption-aware command handling.
+##  What is ATLAS-OPS?
 
-Visual Reasoning: The agent "sees" dashboards to detect anomalies (e.g., a "jagged" latency spike) that raw logs might miss.
+**ATLAS-OPS** is a Go-based cloud incident remediation system built as a backend engineering project to explore SRE automation patterns.
 
-2. Policy-Aware Reasoning Engine
-Confidence-Scored Decisions: Every recommendation includes a 0–100% confidence score and a "Reasoning Summary" (e.g., “85% confidence: DB Connection Exhaustion based on RDS metrics”).
+It ingests infrastructure metrics, detects anomalies using a trend-analysis policy engine (EMA + slope + confidence scoring), and routes remediation actions through an SQS-backed async worker pipeline to execute against AWS EC2 resources — with an approval workflow so operators stay informed before critical actions execute.
 
-Safety Policies: Hard-coded guardrails prevent high-risk actions (e.g., "Never scale production during peak hours without Admin approval").
+> This is a functional prototype with core components implemented and Terraform-validated infrastructure. End-to-end production runtime testing is ongoing.
 
-3. Incident State Machine
-Deterministic lifecycle for every event: DETECTED → ANALYZING → PROPOSED → APPROVED → EXECUTED → VERIFIED.
+---
 
-Ensures the agent never loses context during long-running tasks.
+##  The Problem
 
-4. Reliability & Execution
-Dry-Run Mode: Simulates infrastructure changes (API DryRun flags) before actual execution.
+In cloud operations, detection is fast — but response is slow and manual.
 
-Hybrid Execution (API + UI): Primary execution via AWS SDK/Boto3; falls back to Nova Act UI Automation if APIs are throttled or internal consoles are required.
+| Reality | Cost |
+|--------|------|
+| Alerts fire; humans get paged | Delayed response, high MTTR |
+| Same incidents diagnosed from scratch each time | No automated institutional memory |
+| Manual remediation under pressure | Human error, inconsistent outcomes |
+| Repetitive low-severity incidents consume on-call bandwidth | Engineer fatigue on fixable problems |
 
-5. Governance & Observability
-Immutable Audit Log: Every decision, voice prompt, and execution result is logged for compliance.
+**ATLAS-OPS explores automating the detect → evaluate → act loop** for common EC2 failure patterns, reducing the need for manual intervention on well-understood incidents.
 
-Post-Incident Reports: Automated generation of "Executive Summaries" and "Root Cause Analysis" (RCA) documents.
+---
 
-## System Architecture
+##  What's Implemented
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+|  **Incident Detection** | ✅ Implemented | API ingests metrics; incidents created and classified by severity |
+|  **Policy Engine** | ✅ Implemented | EMA + slope + confidence scoring — not just static thresholds |
+|  **SQS Async Queue** | ✅ Implemented | Actions enqueued to AWS SQS; decoupled from detection |
+|  **Worker Execution Layer** | ✅ Implemented | Goroutine-based workers consume queue and execute EC2 remediations |
+|  **DynamoDB Persistence** | ✅ Implemented | Incidents, metrics, and audit logs persisted across all lifecycle states |
+|  **Audit Trail** | ✅ Implemented | Every state transition logged via `audit.go` |
+|  **EC2 Remediation** | ✅ Implemented | Restart + rollback logic with retry handling via Go SDK v2 |
+|  **Approval Workflow** | ✅ Implemented | Operator approval gate before executing critical remediation actions |
+|  **Terraform IaC** | ✅ Validated | `init / validate / plan / apply / destroy` tested; all AWS resources provisioned |
+|  **React Dashboard** | 🔧 In Progress | Frontend scaffolded; full integration with backend in progress |
+|  **CloudWatch Integration** | 🔧 In Progress | Integration implemented; live metric ingestion under validation |
+
+---
+
+## 🏛️ System Architecture
+
 ```
-Plaintext
-[ USER ] <---(Voice/Vision)---> [ MULTIMODAL GATEWAY ]
-                                       |
-                                [ ORCHESTRATOR ] <-----> [ STATE MACHINE ]
-                                       |              (DynamoDB / Redis)
-        _______________________________|_______________________________
-       |                               |                              |
-[ REASONING LAYER ]           [ EXECUTION LAYER ]           [ OBSERVABILITY ]
- - Gemini 1.5 Pro (Brain)      - AWS SDK (Boto3)             - CloudWatch / Logs
- - Amazon Nova (Agentic)       - Nova Act (UI Auth)          - Telemetry Dashboard
- - Policy Engine               - Approval Workflows          - Audit Trail (S3)
+┌─────────────────────────────────────────────────────────┐
+│                    ATLAS-OPS SYSTEM                     │
+│                                                         │
+│  ┌──────────────┐    ┌───────────────────────────────┐  │
+│  │  CloudWatch  │    │        React Dashboard        │  │
+│  │  EC2 Metrics │    │   (Incidents · Stats · Logs)  │  │
+│  └──────┬───────┘    └───────────────────────────────┘  │
+│         │                           ▲                   │
+│         ▼                           │                   │
+│  ┌──────────────────┐    ┌──────────┴──────────┐        │
+│  │ Incident Service │───▶│   DynamoDB Store    │        │
+│  │  (api/server.go) │    │  (incident history) │        │
+│  └──────┬───────────┘    └─────────────────────┘        │
+│         │                                               │
+│         ▼                                               │
+│  ┌──────────────────────────────────────┐               │
+│  │  Policy Engine (policy/engine.go)    │               │
+│  │  EMA + slope trend analysis          │               │
+│  │  Confidence scoring → action routing │               │
+│  └──────┬───────────────────────────────┘               │
+│         │                                               │
+│         ▼                                               │
+│  ┌──────────────────┐                                   │
+│  │  Approval Gate   │  ← operator confirms before       │
+│  │  (api/server.go) │    critical actions execute       │
+│  └──────┬───────────┘                                   │
+│         │                                               │
+│         ▼                                               │
+│  ┌──────────────────┐                                   │
+│  │   SQS Queue      │  ← async, decoupled delivery      │
+│  │  (queue/sqs.go)  │                                   │
+│  └──────┬───────────┘                                   │
+│         │                                               │
+│         ▼                                               │
+│  ┌──────────────────┐    ┌─────────────────────────┐    │
+│  │  Worker Layer    │───▶│     EC2 Execution       │    │
+│  │(worker/processor)│    │  Restart · Rollback     │    │
+│  └──────────────────┘    └─────────────────────────┘    │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Implementation Details
-Google Gemini Live Agent (GCP)
-Model: gemini-1.5-flash-8b for low-latency voice and gemini-1.5-pro for complex visual reasoning.
+---
 
-Implementation: Utilizes Multimodal Live API to handle real-time streaming of audio and video frames from the operator's workstation.
+##  Project Structure
 
-Logic: Gemini acts as the primary "Front-End" for natural language understanding and high-level strategy.
+```
+ATLAS-OPS/
+│
+├── api/
+│   ├── server.go              # HTTP server, route registration, approval workflow
+│   └── worker.go              # Background worker process entrypoint
+│
+├── aws/
+│   ├── cloudwatch.go          # CloudWatch metrics ingestion
+│   └── ec2.go                 # EC2 instance control via AWS SDK Go v2
+│
+├── cmd/
+│   ├── api/
+│   │   └── main.go            # API server entry point
+│   └── worker/
+│       └── main.go            # Worker process entry point
+│
+├── execution/
+│   └── ec2_scaler.go          # EC2 remediation executor with retry + rollback logic
+│
+├── incident/
+│   ├── model.go               # Incident struct and type definitions
+│   ├── audit.go               # Audit logging for every lifecycle state transition
+│   ├── dynamo_store.go        # DynamoDB read/write operations
+│   └── metrics.go             # Incident metrics aggregation
+│
+├── infra/
+│   └── metrics_store.go       # Infrastructure-level metrics persistence
+│
+├── policy/
+│   └── engine.go              # EMA + slope + confidence scoring policy evaluator
+│
+├── queue/
+│   └── sqs.go                 # SQS producer (SendMessage) and consumer logic
+│
+├── worker/
+│   └── processor.go           # Queue consumer, task executor, retry handling
+│
+├── atlas-ops-dashboard/       # React observability frontend (in progress)
+│
+├── terraform/
+├── go.mod
+└── go.sum
+```
 
-Amazon Nova Implementation (AWS)
-Model: Amazon Nova Pro & Amazon Nova Lite.
+---
 
-Nova Act: Utilized for advanced UI-based automation where API coverage is incomplete or legacy consoles are used.
+##  Incident Lifecycle
 
-Infrastructure: Orchestrated via AWS Step Functions to maintain the Incident State Machine and AWS Lambda for specialized tool-calling.
+```
+1. DETECT
+   Metrics ingested via API or CloudWatch
+   Threshold + trend analysis → Incident created with severity tag
+         │
+         ▼
+2. PERSIST
+   Incident written to DynamoDB (status: OPEN)
+   Audit log entry created via audit.go
+         │
+         ▼
+3. EVALUATE
+   policy/engine.go computes EMA, slope, and confidence score
+   Decision output: RESTART / ROLLBACK / ESCALATE / NO_ACTION
+         │
+         ▼
+4. APPROVE
+   For critical actions: operator approval required via API
+   Approved → proceeds to queue
+   Rejected → incident marked CANCELLED, audit logged
+         │
+         ▼
+5. ENQUEUE
+   Approved action published to AWS SQS (message body: incidentID)
+   Queue absorbs load; execution stays decoupled from detection
+         │
+         ▼
+6. EXECUTE
+   worker/processor.go drains the SQS queue
+   Calls execution/ec2_scaler.go + aws/ec2.go
+   Retry logic handles transient AWS API failures
+   Rollback triggered if execution fails past retry limit
+         │
+         ▼
+7. RESOLVE
+   Incident updated in DynamoDB (status: RESOLVED / FAILED)
+   Metrics counters updated via incident/metrics.go
+   Final audit log entry written
+```
 
-## Technology Stack
-Language: Python 3.11+, TypeScript (Frontend)
+---
 
-AI/ML: Google Gemini API, Amazon Bedrock (Nova), LangGraph (Agent Orchestration)
+##  Policy Engine — How Decisions Are Made
 
-Cloud: AWS (Lambda, Step Functions, DynamoDB, CloudWatch), GCP (Vertex AI)
+Rather than static threshold rules, the policy engine uses **metric trend analysis**:
 
-Infrastructure as Code: AWS CDK / Terraform
+- **EMA (Exponential Moving Average)** — smooths out noise in incoming metric values to avoid false positives from transient spikes
+- **Slope calculation** — detects whether a metric is trending upward, stable, or recovering
+- **Confidence scoring** — weights the decision based on signal strength before committing to an action
 
-Communication: WebRTC for Live Voice, WebSockets for State Updates
+This means a CPU value of 85% with a rising slope and high confidence triggers remediation; the same value with a flat or declining slope may not — matching how a human SRE would reason about it.
 
-## Setup & Deployment
-Local Development
-Clone the Repo: git clone https://github.com/user/ops-copilot
+---
 
-Environment Variables: Create a .env with GOOGLE_API_KEY, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY.
+##  Distributed Systems Concepts Applied
 
-Install Dependencies: pip install -r requirements.txt
+- **Producer-Consumer Pattern** — Policy engine produces actions; workers consume independently
+- **Asynchronous Execution** — SQS decouples detection from remediation; neither layer blocks the other
+- **Event-Driven Architecture** — An incident event cascades through detection → policy → approval → queue → execution
+- **At-Least-Once Delivery** — SQS visibility timeouts ensure messages survive worker restarts; retry logic in `processor.go` handles redelivery
+- **Failure Isolation** — A crashed worker doesn't affect the API server or policy engine
+- **Audit Trail** — Every state transition logged via `audit.go` for full incident forensics
+- **Separation of Concerns** — Detection, decision, approval, and execution are independent layers
 
-Launch Dashboard: npm install && npm start (within /frontend)
+---
 
-Run Agent: python main.py
+##  Tech Stack
 
-Cloud Deployment
-Backend: Deploy the FastAPI application to AWS App Runner or Google Cloud Run.
+### Backend
+| Technology | Role |
+|------------|------|
+| **Go (Golang)** | Core backend — API server, policy engine, worker processes |
+| `net/http` | REST API server |
+| Goroutines | Concurrent worker execution |
+| AWS SDK Go v2 | Direct AWS service integration |
 
-State: Provision DynamoDB tables for incident tracking.
+### Cloud — AWS
+| Service | Role |
+|---------|------|
+| **EC2** | Compute target — restart and rollback remediations |
+| **SQS** | Async remediation queue — decoupled task delivery |
+| **DynamoDB** | Incident, metrics, and audit log persistence |
+| **CloudWatch** | Metrics ingestion (integration in progress) |
+| **IAM** | Role-based access control for all service identities |
 
-Voice: Configure the Multimodal Live API endpoint.
+### Infrastructure as Code
+| Tool | Role |
+|------|------|
+| **Terraform** | All AWS resources provisioned declaratively (`init/validate/plan/apply/destroy` validated) |
 
-## Demo Walkthrough
-Detection: User shares screen showing a Grafana dashboard with rising 5xx errors.
+### Frontend
+| Technology | Role |
+|------------|------|
+| **React** | Observability dashboard (in progress) |
 
-Diagnosis: User asks (Voice): "What's happening?" Agent analyzes the screen and logs, responding with 92% confidence that the DB is throttled.
+---
 
-Proposal: Agent proposes: "I should increase the RDS instance size. This will cost ~$12/day. Proceed?"
+##  Getting Started
 
-Dry-Run: User says: "Do a dry run." Agent simulates the API call and confirms no IAM conflicts.
+### Prerequisites
 
-Execution & Verification: User approves; Agent scales the DB, monitors the latency drop, and confirms: "Systems back to normal. Report generated."
+```bash
+go 1.21+
+aws configure        # AWS CLI with credentials and region configured
+terraform 1.5+
+node 18+             # For the React dashboard
+```
 
-## Safety, Reliability & Governance
-Human-in-the-Loop (HITL): No "Write" actions occur without explicit verbal or UI confirmation.
+### 1. Clone & Install
 
-Least Privilege: Agent uses scoped IAM roles with ResourceTag restrictions to prevent accidental deletions.
+```bash
+git clone https://github.com/shreyaabaranwal/ATLAS-OPS.git
+cd ATLAS-OPS
+go mod tidy
+```
 
-Reversibility: Every "Action" playbook includes a corresponding "Rollback" path in the state machine.
+### 2. Configure Environment
 
-## Why This Is Different
-Most AI chatbots are Passive/Text-Only. Ops-Copilot is:
+```bash
+export AWS_REGION=us-east-1
+export DYNAMODB_TABLE=atlas-incidents
+export SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/<ACCOUNT_ID>/atlas-queue
+```
 
-Proactive: It watches dashboards and alerts the user before they ask.
+### 3. Provision Infrastructure
 
-Multimodal: It understands the spatial layout of a dashboard, not just JSON text.
+```bash
+cd terraform/
+terraform init
+terraform plan       # Review what will be created
+terraform apply      # Provisions SQS, DynamoDB, IAM roles, security groups
+```
 
-Stateful: It remembers the incident context across a 20-minute conversation.
+### 4. Run the API Server
 
-Accountable: It provides a deterministic audit trail that satisfies enterprise SRE requirements.
+```bash
+go run cmd/api/main.go
+# Listening on http://localhost:8080
+```
 
-## Future Improvements
-Self-Healing Playbooks: Learning from previous human approvals to suggest more accurate "Confidence" scores.
+### 5. Run the Worker
 
-Cost Optimization Mode: Integrating AWS Cost Explorer to suggest cheaper remediation paths.
+```bash
+# Separate terminal
+go run cmd/worker/main.go
+# Worker polling SQS for remediation tasks
+```
 
-Multi-Cloud Sync: Native support for Azure Resource Manager.
+### 6. Start the Dashboard
 
-Hackathon Eligibility Compliance
-Google Gemini Live Agent Challenge: Built using Gemini 1.5 Pro and Multimodal Live API features.
+```bash
+cd atlas-ops-dashboard/
+npm install && npm start
+# Dashboard at http://localhost:3000
+```
 
-Amazon Nova AI Hackathon: Built using Amazon Nova models via Bedrock and utilizing Nova Act for UI-based automation.
+---
 
-Originality: This project was developed specifically for these challenges as a demonstration of next-generation cloud operations.
+## 🔌 API Reference
+
+### POST `/incident` — Report an Incident
+
+```json
+{
+  "instance_id": "i-0abc123def456789",
+  "severity": "critical",
+  "metric": "cpu",
+  "value": 95.4
+}
+```
+
+**Response:**
+
+```json
+{
+  "incident_id": "INC-20240115-001",
+  "status": "OPEN",
+  "action": "RESTART_INSTANCE",
+  "requires_approval": true
+}
+```
+
+### POST `/incident/{id}/approve` — Approve Remediation
+
+```json
+{ "approved": true }
+```
+
+### GET `/incident/{id}` — Fetch Incident State
+
+```json
+{
+  "incident_id": "INC-20240115-001",
+  "instance_id": "i-0abc123def456789",
+  "severity": "critical",
+  "status": "RESOLVED",
+  "action_taken": "RESTART_INSTANCE",
+  "resolved_at": "2024-01-15T03:43:12Z"
+}
+```
+
+### GET `/metrics` — Aggregate Metrics
+
+```json
+{
+  "total_incidents": 12,
+  "resolved": 9,
+  "failed": 1,
+  "pending_approval": 2
+}
+```
+
+---
+
+##  Terraform Infrastructure
+
+All AWS resources are provisioned declaratively. Terraform lifecycle (`init / validate / plan / apply / destroy`) has been tested end-to-end.
+
+| Resource | Purpose |
+|----------|---------|
+| SQS queue | Async task delivery with configurable visibility timeout |
+| DynamoDB table | Incident and audit log storage |
+| IAM roles | Scoped service identities for API and worker processes |
+| IAM instance profiles | EC2-to-AWS service access |
+| Security groups | Network access control for provisioned resources |
+
+---
+
+##  Security Considerations
+
+- **IAM roles scoped by service** — API server and worker run under separate IAM roles with only the permissions each needs
+- **No hardcoded credentials** — AWS access is via environment variables or IAM instance profiles; no keys in source code
+- **`terraform.tfvars` gitignored** — environment-specific values excluded from version control
+- **Approval gate for critical actions** — destructive remediations require explicit operator approval before execution
+
+> Note: Security group rules and IAM policies should be reviewed against your specific environment before deploying to any shared or production account.
+
+---
+
+##  Engineering Challenges
+
+- **Trend-based policy design** — moving beyond static thresholds to EMA + slope + confidence scoring to reduce false positives without losing detection sensitivity
+- **Decoupled remediation pipeline** — designing the policy, approval, queue, and worker layers to fail and recover independently
+- **Approval workflow integration** — threading operator approval into the async pipeline without blocking the detection layer
+- **Retry and rollback logic** — handling transient AWS API failures in the executor while avoiding repeated harmful actions
+- **Audit consistency** — ensuring every DynamoDB state transition has a corresponding audit log entry
+
+---
+
+##  Future Scope
+
+| Feature | Description |
+|---------|-------------|
+|  **Dead Letter Queue (DLQ)** | Route exhausted retries to a DLQ for inspection and replay |
+|  **Slack / PagerDuty Alerts** | Escalation notifications for incidents that can't be auto-resolved |
+|  **Prometheus + Grafana** | Replace custom metrics layer with a standard observability stack |
+|  **Kubernetes Integration** | Extend remediation to pod restarts and deployment rollbacks |
+|  **Chaos Engineering Tests** | Synthetic failure injection to validate pipeline resilience |
+|  **Multi-Region Support** | Cross-region incident routing and remediation |
+|  **End-to-End Load Testing** | Validate full incident lifecycle under simulated concurrent load |
+
+---
+
+##  Why ATLAS-OPS?
+
+Most backend projects are a REST API over a database. ATLAS-OPS is an attempt to build something closer to how real SRE systems work — where detection, policy, and execution are separate concerns connected through an async pipeline, and every action is auditable.
+
+The design decisions here (EMA-based policy scoring, approval gates, decoupled worker architecture, full audit trail) reflect patterns used in real incident management platforms, adapted to a scale appropriate for a self-directed backend project.
+
+---
+
+##  Author
+
+Built by **Shreya Baranwal** — Go backend developer & aspiring cloud architect.
+
+Focused on distributed systems, cloud reliability, and infrastructure automation.
+
+[![GitHub](https://img.shields.io/badge/GitHub-shreyaabaranwal-181717?style=flat&logo=github)](https://github.com/shreyaabaranwal)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Shreya%20Baranwal-0A66C2?style=flat&logo=linkedin)](https://www.linkedin.com/in/shreya-baranwal-1103802a5/)
+[![Hashnode](https://img.shields.io/badge/Hashnode-Blog-2962FF?style=flat&logo=hashnode)](https://hashnode.com/@shreyabaranwaal)
+[![Twitter](https://img.shields.io/badge/Twitter-@Shreyasher786-1DA1F2?style=flat&logo=twitter)](https://twitter.com/Shreyasher786)
+[![Email](https://img.shields.io/badge/Email-shreyabaranwal229@gmail.com-D14836?style=flat&logo=gmail)](mailto:shreyabaranwal229@gmail.com)
+
+---
+
+<div align="center">
+
+*Built to learn how real incident systems think — detect, evaluate, approve, execute, audit.*
+
+</div>
