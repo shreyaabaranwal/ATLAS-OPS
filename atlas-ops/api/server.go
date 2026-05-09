@@ -29,7 +29,7 @@ func StartServer(cfg sdkaws.Config) {
 	metricsStore := infra.NewMetricsStore(cfg, "atlas-metrics")
 	auditStore := incident.NewAuditStore(cfg, "atlas-audit")
 
-	queueURL := "https://sqs.ap-south-1.amazonaws.com/458329143405/atlas-incident-queue"
+	queueURL := "https://sqs.ap-south-1.amazonaws.com/606639293354/atlas-incident-queue"
 	sqsClient := queue.NewSQSClient(cfg, queueURL)
 
 	mux := http.NewServeMux()

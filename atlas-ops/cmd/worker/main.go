@@ -12,7 +12,7 @@ import (
 
 func main() {
 
-	log.Println("🚀 Starting Worker...")
+	log.Println(" Starting Worker...")
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
